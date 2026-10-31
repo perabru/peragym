@@ -1,3 +1,4 @@
 {
-  "spotifyClientId": ""
+  "spotifyClientId": "",
+  "googleClientId": ""
 }

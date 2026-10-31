@@ -1,5 +1,5 @@
-import {makeEmbedUrl,makeSpotifyEmbedUrl} from './music-links.js?v=3.3.0';
-import {createSpotifyPlayback} from './spotify-playback.js?v=3.3.0';
+import {makeEmbedUrl,makeSpotifyEmbedUrl} from './music-links.js?v=3.4.0';
+import {createSpotifyPlayback} from './spotify-playback.js?v=3.4.0';
 
 let youtubePromise;
 function youtubeApi(){
@@ -57,7 +57,7 @@ export function createMusicPlayer(mount,options={}){
     const image=$('[data-track-image]');image.removeAttribute('src');image.hidden=true;
     update({paused:true,position:0,duration:0});
   }
-  function close(){destroy();media=undefined;mount.hidden=true;document.body.classList.remove('music-active');}
+  function close(){destroy();media=undefined;mount.hidden=true;state={paused:true,position:0,duration:0};source.removeAttribute('href');source.textContent='Abrir no serviço ↗';$('[data-track-title]').textContent='';$('[data-track-artist]').textContent='';const image=$('[data-track-image]');image.removeAttribute('src');image.hidden=true;name.textContent='player';setStatus('');document.body.classList.remove('music-active');}
   function pause(){
     if(!media)return;
     if(!ready){close();return;}

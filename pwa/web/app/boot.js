@@ -8,7 +8,7 @@
   const MINIMUM_LOADING = 850;
   const STARTUP_TIMEOUT = 12000;
   let ready = false, failed = false, visible = false, mounted = false, domReady = document.readyState !== 'loading';
-  let revealTimer, removalTimer;
+  let revealTimer, removalTimer, failureMessage='Tente novamente. Seus dados continuam salvos neste aparelho.';
   const find = id => document.getElementById(id);
   const timeout = setTimeout(() => fail(), STARTUP_TIMEOUT);
 
@@ -19,11 +19,12 @@
     const status = find('loading-status');
     if (status) status.textContent = 'Não foi possível abrir o PeraGym.';
     const message = find('loading-error-message');
-    if (message) message.textContent = 'Tente novamente. Seus dados continuam salvos neste aparelho.';
+    if (message) message.textContent = failureMessage;
     if (recovery) recovery.hidden = false;
   }
 
-  function fail() {
+  function fail(event) {
+    if(typeof event?.detail?.message==='string')failureMessage=event.detail.message.slice(0,220);
     if (ready || visible) return;
     failed = true;
     clearTimeout(timeout);
@@ -64,7 +65,7 @@
   window.addEventListener('error', event => {
     if (ready || visible) return;
     const resource = event.target?.src || event.filename || '';
-    if (/(?:^|\/)app\/(?:app|db|charts|music-links|music-player)\.js(?:[?#]|$)/.test(resource)) fail();
+    if (/(?:^|\/)app\/(?:app|db|charts|music-links|music-player|local-account|local-auth-ui|local-biometric|youtube-account|spotify-account|spotify-playback)\.js(?:[?#]|$)/.test(resource)) fail();
   }, true);
   window.addEventListener('unhandledrejection', () => { if (!ready && !visible) fail(); });
   document.addEventListener('readystatechange', () => { if (document.readyState !== 'loading') mount(); });

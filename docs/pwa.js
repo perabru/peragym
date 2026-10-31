@@ -14,7 +14,7 @@
 
   if (!document.querySelector('link[href^="/peragym/docs/pwa.css"]')) {
     const styles = document.createElement('link');
-    styles.rel = 'stylesheet'; styles.href = '/peragym/docs/pwa.css?v=3.3.0'; document.head.append(styles);
+    styles.rel = 'stylesheet'; styles.href = '/peragym/docs/pwa.css?v=3.4.0'; document.head.append(styles);
   }
 
   function setInstalledSession(value) {
@@ -158,7 +158,7 @@
     });
     window.addEventListener('online', () => { prepareOffline(); registration?.update().catch(() => {}); });
     try {
-      registration = await navigator.serviceWorker.register('/peragym/docs/sw.js?v=3.3.0', {scope: '/peragym/docs/'});
+      registration = await navigator.serviceWorker.register('/peragym/docs/sw.js?v=3.4.0', {scope: '/peragym/docs/'});
       const readyTimeout = setTimeout(() => window.dispatchEvent(new CustomEvent('peragym:offline-unavailable')), 10000);
       navigator.serviceWorker.ready.then(active => {
         clearTimeout(readyTimeout); registration = active; prepareOffline();

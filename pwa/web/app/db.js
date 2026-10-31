@@ -1,10 +1,10 @@
-/* PeraGym's personal data stays in this browser's private IndexedDB. */
-import {parseMusicLink} from './music-links.js?v=3.3.0';
+/* Personal records live only in the unlocked encrypted profile; legacy IndexedDB is read-only. */
+import {parseMusicLink} from './music-links.js?v=3.4.0';
+import {localAccount} from './local-account.js?v=3.4.0';
 
-const DB_NAME = 'peragym-local';
-const VERSION = 1;
-const STORES = ['workouts', 'sessions', 'settings', 'loadHistory', 'bodyWeights'];
-let opened;
+const LEGACY_DB_NAME = 'peragym-local';
+const LEGACY_STORES = ['workouts', 'sessions', 'settings', 'loadHistory', 'bodyWeights'];
+const RECORDS = ['workouts', 'sessions', 'loadHistory', 'bodyWeights'];
 
 export const uid = () => crypto.randomUUID();
 const invalid = message => { throw new Error(message); };
@@ -64,124 +64,109 @@ export function validateBodyWeight(input, now = Date.now()) {
   if (!Number.isFinite(at) || at < new Date('1900-01-01').getTime() || at > now + 60000) invalid('Escolha uma data e horário válidos, sem datas futuras.');
   return {id: validId(input.id) ? input.id : uid(), at, value: parseKg(input.value, 20, 400), notes: cleanText(input.notes, 500)};
 }
-function open() {
-  if (!opened) opened = new Promise((resolve, reject) => {
-    if (!globalThis.indexedDB) return reject(new Error('Este navegador não oferece o banco local necessário. Abra no Safari ou Chrome atualizado.'));
-    const request = indexedDB.open(DB_NAME, VERSION);
-    request.onupgradeneeded = () => {
-      const db = request.result;
-      STORES.forEach(name => {
-        const store = db.createObjectStore(name, {keyPath: name === 'settings' ? 'key' : 'id'});
-        if (name === 'loadHistory') store.createIndex('exerciseId', 'exerciseId');
-        if (name === 'loadHistory' || name === 'bodyWeights') store.createIndex('at', 'at');
-      });
-    };
-    request.onsuccess = () => {
-      const db = request.result;
-      db.onversionchange = () => {db.close(); opened = null;}; resolve(db);
-    };
-    request.onerror = () => {opened = null; reject(new Error('Não foi possível abrir o banco local. Verifique se o navegador permite armazenar dados.'));};
-    request.onblocked = () => reject(new Error('Feche outras abas do PeraGym e tente novamente.'));
-  });
-  return opened;
+function requireSnapshot(data) {
+  if (!data || RECORDS.some(name => !Array.isArray(data[name]))) invalid('O cofre deste perfil contém dados inválidos. Nenhuma alteração foi salva.');
+  return data;
 }
-async function transact(names, mode, fn) {
-  const db = await open();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(names, mode), stores = Object.fromEntries(names.map(n => [n, tx.objectStore(n)]));
-    let result, failure;
-    const fail = error => {failure = error; tx.abort();};
-    tx.oncomplete = () => resolve(result);
-    tx.onerror = tx.onabort = () => reject(failure || new Error('Não foi possível salvar no aparelho. Verifique o espaço disponível e tente novamente.'));
-    try { fn(stores, value => {result = value;}, fail); } catch (error) { fail(error); }
-  });
+function captureSession() {
+  const session = localAccount.getState();
+  if (!session.unlocked || !session.profileId) throw Object.assign(new Error('Desbloqueie seu perfil para acessar os dados.'), {name:'LocalAccountLocked'});
+  return {profileId:session.profileId, generation:session.generation};
+}
+function checkSession(expected) {
+  const current = localAccount.getState();
+  if (!current.unlocked || current.profileId !== expected.profileId || current.generation !== expected.generation) {
+    throw Object.assign(new Error('O perfil foi bloqueado ou alterado. Nenhum dado foi importado.'), {name:'LocalAccountCancelled'});
+  }
 }
 export async function load() {
-  const all = await transact(STORES, 'readonly', (stores, done) => {
-    const result = {}; let pending = STORES.length;
-    STORES.forEach(name => {const r = stores[name].getAll(); r.onsuccess = () => {result[name] = r.result; if (!--pending) done(result);};});
-  });
-  const settings = Object.fromEntries(all.settings.map(row => [row.key, row.value]));
+  const data = requireSnapshot(await localAccount.readData());
   return {
-    workouts: all.workouts.sort((a,b) => a.createdAt - b.createdAt),
-    sessions: all.sessions.sort((a,b) => b.completedAt - a.completedAt),
-    loadHistory: all.loadHistory.sort((a,b) => a.at - b.at),
-    bodyWeights: all.bodyWeights.sort((a,b) => a.at - b.at),
-    theme: settings.theme || (globalThis.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'),
-    activeSession: settings.activeSession || null,
-    musicLinks: settings.musicLinks === undefined ? [] : validateMusicLinks(settings.musicLinks)
+    workouts:data.workouts.sort((a,b) => a.createdAt - b.createdAt),
+    sessions:data.sessions.sort((a,b) => b.completedAt - a.completedAt),
+    loadHistory:data.loadHistory.sort((a,b) => a.at - b.at),
+    bodyWeights:data.bodyWeights.sort((a,b) => a.at - b.at),
+    theme:data.theme || (globalThis.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'),
+    activeSession:data.activeSession || null,
+    musicLinks:data.musicLinks === undefined ? [] : validateMusicLinks(data.musicLinks),
+    legacyImport:data.legacyImport || null
   };
 }
 export async function saveWorkout(input) {
   const workout = validateWorkout(input), now = Date.now();
-  return transact(['workouts','loadHistory'], 'readwrite', (stores, done, fail) => {
-    const r = stores.workouts.get(workout.id);
-    r.onsuccess = () => {
-      try {
-        const old = r.result;
-        workout.createdAt = old?.createdAt || now; workout.updatedAt = now;
-        // An exercise ID belongs to one fiche: reject collisions with a different workout.
-        const all = stores.workouts.getAll();
-        all.onsuccess = () => {
-          const otherIds = new Set(all.result.filter(w => w.id !== workout.id).flatMap(w => w.exercises.map(e => e.id)));
-          if (workout.exercises.some(e => otherIds.has(e.id))) return fail(new Error('Um exercício pertence a outra ficha. Adicione-o novamente.'));
-          workout.exercises.forEach(e => {
-            const previous = old?.exercises.find(x => x.id === e.id);
-            if (!previous || previous.weight !== e.weight) stores.loadHistory.add({id:uid(), workoutId:workout.id, workoutName:workout.name, exerciseId:e.id, name:e.name, at:now, value:e.weight});
-          });
-          stores.workouts.put(workout); done({id:workout.id});
-        };
-      } catch (e) { fail(e); }
-    };
+  return localAccount.mutateData(data => {
+    requireSnapshot(data);
+    const old = data.workouts.find(w => w.id === workout.id);
+    const otherIds = new Set(data.workouts.filter(w => w.id !== workout.id).flatMap(w => w.exercises.map(e => e.id)));
+    if (workout.exercises.some(e => otherIds.has(e.id))) invalid('Um exercício pertence a outra ficha. Adicione-o novamente.');
+    workout.createdAt = old?.createdAt ?? now; workout.updatedAt = now;
+    workout.exercises.forEach(e => {
+      const previous = old?.exercises.find(x => x.id === e.id);
+      if (!previous || previous.weight !== e.weight) data.loadHistory.push({id:uid(),workoutId:workout.id,workoutName:workout.name,exerciseId:e.id,name:e.name,at:now,value:e.weight});
+    });
+    const index = data.workouts.findIndex(w => w.id === workout.id);
+    if (index < 0) data.workouts.push(workout); else data.workouts[index] = workout;
+    return {id:workout.id};
   });
 }
 export async function deleteWorkout(id) {
-  return transact(['workouts','sessions'], 'readwrite', (stores, done) => {
-    stores.workouts.delete(id);
-    const r = stores.sessions.getAll(); r.onsuccess = () => r.result.filter(s => s.workoutId === id).forEach(s => stores.sessions.put({...s,workoutId:null}));
-    done({ok:true}); // Load history intentionally survives fiche deletion.
+  return localAccount.mutateData(data => {
+    requireSnapshot(data);
+    data.workouts = data.workouts.filter(w => w.id !== id);
+    data.sessions.forEach(s => {if (s.workoutId === id) s.workoutId = null;});
+    if (data.activeSession?.id === id) data.activeSession = null;
+    return {ok:true}; // Historical completed sessions and loads survive fiche deletion.
   });
 }
 export async function updateWeight(exerciseId, raw) {
   const weight = parseKg(raw);
-  return transact(['workouts','loadHistory'], 'readwrite', (stores, done, fail) => {
-    const r = stores.workouts.getAll(); r.onsuccess = () => {
-      const w = r.result.find(w => w.exercises.some(e => e.id === exerciseId));
-      if (!w) return fail(new Error('Exercício não encontrado. Abra a ficha novamente.'));
-      const e = w.exercises.find(e => e.id === exerciseId);
-      if (e.weight !== weight) {
-        e.weight = weight; w.updatedAt = Date.now(); stores.workouts.put(w);
-        stores.loadHistory.add({id:uid(),workoutId:w.id,workoutName:w.name,exerciseId:e.id,name:e.name,at:Date.now(),value:weight});
-      }
-      done({ok:true});
-    };
+  return localAccount.mutateData(data => {
+    requireSnapshot(data);
+    const w = data.workouts.find(w => w.exercises.some(e => e.id === exerciseId));
+    if (!w) invalid('Exercício não encontrado. Abra a ficha novamente.');
+    const e = w.exercises.find(e => e.id === exerciseId);
+    if (e.weight !== weight) {
+      e.weight = weight; w.updatedAt = Date.now();
+      data.loadHistory.push({id:uid(),workoutId:w.id,workoutName:w.name,exerciseId:e.id,name:e.name,at:Date.now(),value:weight});
+    }
+    return {ok:true};
   });
 }
 export async function finishWorkout(input) {
+  if (!input || typeof input !== 'object') invalid('Treino inválido.');
   const duration = integer(input.duration, 0, 2147483647, 'Tempo de treino inválido.');
-  return transact(['workouts','sessions','settings'], 'readwrite', (stores, done, fail) => {
-    const r = stores.workouts.get(input.workoutId); r.onsuccess = () => {
-      if (!r.result) return fail(new Error('Ficha não encontrada.'));
-      const s = {id:uid(),workoutId:r.result.id,workoutName:r.result.name,completedAt:Date.now(),duration};
-      stores.sessions.add(s);stores.settings.delete('activeSession');done({id:s.id});
-    };
+  return localAccount.mutateData(data => {
+    requireSnapshot(data);
+    const w = data.workouts.find(w => w.id === input.workoutId);
+    if (!w) invalid('Ficha não encontrada.');
+    const session = {id:uid(),workoutId:w.id,workoutName:w.name,completedAt:Date.now(),duration};
+    data.sessions.push(session); data.activeSession = null;
+    return {id:session.id};
   });
 }
 export async function setSetting(key, value) {
   if (!['theme','activeSession','musicLinks'].includes(key)) invalid('Preferência inválida.');
   if (key === 'theme' && !['light','dark'].includes(value)) invalid('Tema inválido.');
-  if (key === 'musicLinks') value = validateMusicLinks(value);
-  return transact(['settings'],'readwrite',(stores,done) => {stores.settings.put({key,value});done({ok:true});});
+  value = key === 'musicLinks' ? validateMusicLinks(value) : structuredClone(value);
+  return localAccount.mutateData(data => {requireSnapshot(data);data[key] = value;return {ok:true};});
 }
 export async function saveBodyWeight(input) {
   const row = validateBodyWeight(input);
-  return transact(['bodyWeights'],'readwrite',(stores,done) => {stores.bodyWeights.put(row);done({id:row.id});});
+  return localAccount.mutateData(data => {
+    requireSnapshot(data);
+    const index = data.bodyWeights.findIndex(w => w.id === row.id);
+    if (index < 0) data.bodyWeights.push(row); else data.bodyWeights[index] = row;
+    return {id:row.id};
+  });
 }
 export async function deleteBodyWeight(id) {
-  return transact(['bodyWeights'],'readwrite',(stores,done) => {stores.bodyWeights.delete(id);done({ok:true});});
+  return localAccount.mutateData(data => {
+    requireSnapshot(data);data.bodyWeights = data.bodyWeights.filter(w => w.id !== id);return {ok:true};
+  });
 }
 export async function exportBackup() {
-  return {app:'PeraGym',version:1,exportedAt:Date.now(),data:await load()};
+  const {legacyImport, ...data} = await load(); // A migration receipt belongs to its profile, never to a portable backup.
+  return {app:'PeraGym',version:1,exportedAt:Date.now(),data};
 }
 export function validateBackup(raw) {
   if (!raw || raw.app !== 'PeraGym' || raw.version !== 1 || !raw.data) invalid('Este arquivo não é um backup compatível do PeraGym.');
@@ -212,11 +197,76 @@ export function validateBackup(raw) {
   return {...result,theme:d.theme==='dark'?'dark':'light',musicLinks};
 }
 export async function importBackup(raw) {
-  const d = validateBackup(raw); // Validate completely before opening a write transaction.
-  return transact(STORES,'readwrite',(stores,done) => {
-    STORES.forEach(name => stores[name].clear());
-    ['workouts','sessions','loadHistory','bodyWeights'].forEach(name => d[name].forEach(row => stores[name].add(row)));
-    stores.settings.put({key:'theme',value:d.theme});
-    stores.settings.put({key:'musicLinks',value:d.musicLinks});done({ok:true});
+  const validated = validateBackup(raw); // Validate completely before touching the encrypted profile.
+  return localAccount.mutateData(data => {
+    requireSnapshot(data);
+    RECORDS.forEach(name => {data[name] = validated[name];});
+    data.theme = validated.theme; data.musicLinks = validated.musicLinks; data.activeSession = null;
+    // Preserve this profile's existing migration receipt; a backup cannot claim another profile's receipt.
+    return {ok:true};
+  });
+}
+
+const emptyLegacy = () => Object.fromEntries(LEGACY_STORES.map(name => [name, []]));
+/** Read the original database without upgrades, edits, deletion or creating a missing database. */
+async function readLegacy() {
+  if (!globalThis.indexedDB) invalid('Este navegador não oferece o banco local necessário.');
+  if (typeof indexedDB.databases === 'function') {
+    const databases = await indexedDB.databases();
+    if (!databases.some(db => db.name === LEGACY_DB_NAME)) return null;
+  }
+  return new Promise((resolve, reject) => {
+    let creating = false;
+    const request = indexedDB.open(LEGACY_DB_NAME);
+    request.onupgradeneeded = () => {creating = true;request.transaction.abort();};
+    request.onerror = () => creating ? resolve(null) : reject(new Error('Não foi possível ler os dados anteriores. Nenhum dado foi alterado.'));
+    request.onblocked = () => reject(new Error('Feche outras abas antigas do PeraGym e tente importar novamente.'));
+    request.onsuccess = () => {
+      const db = request.result;
+      if (db.version !== 1 || LEGACY_STORES.some(name => !db.objectStoreNames.contains(name))) {
+        db.close(); reject(new Error('A estrutura dos dados anteriores não é compatível. Exporte-os pela versão anterior.')); return;
+      }
+      const tx = db.transaction(LEGACY_STORES, 'readonly'), result = emptyLegacy();
+      LEGACY_STORES.forEach(name => {const r = tx.objectStore(name).getAll();r.onsuccess = () => {result[name] = r.result;};});
+      tx.oncomplete = () => {db.close();resolve(result);};
+      tx.onerror = tx.onabort = () => {db.close();reject(new Error('Não foi possível ler os dados anteriores. Nenhum dado foi alterado.'));};
+    };
+  });
+}
+const legacyCounts = raw => Object.fromEntries(LEGACY_STORES.map(name => [name, raw?.[name]?.length || 0]));
+export async function inspectLegacy() {
+  const legacy = await readLegacy(), counts = legacyCounts(legacy);
+  return {available:legacy !== null,hasData:Object.values(counts).some(Boolean),counts};
+}
+function legacyActiveSession(raw, workouts) {
+  if (raw === null || raw === undefined) return null;
+  const workout = workouts.find(w => w.id === raw.id), startedAt = Number(raw.startedAt);
+  if (!workout || !Number.isFinite(startedAt) || startedAt < 0 || startedAt > Date.now()+60000
+      || !Array.isArray(raw.done) || raw.done.some(id => !workout.exercises.some(e => e.id === id))
+      || new Set(raw.done).size !== raw.done.length) invalid('O treino em andamento anterior é inválido. Nenhum dado foi importado.');
+  return {id:raw.id,startedAt,done:[...raw.done]};
+}
+export async function migrateLegacy() {
+  const session = captureSession(), previous = requireSnapshot(await localAccount.readData());
+  checkSession(session);
+  if (previous.legacyImport) return {ok:true,alreadyImported:true,counts:structuredClone(previous.legacyImport.counts)};
+  const legacy = await readLegacy(), counts = legacyCounts(legacy);
+  checkSession(session);
+  if (!legacy || !Object.values(counts).some(Boolean)) invalid('Não há dados anteriores para importar.');
+  const settings = Object.fromEntries(legacy.settings.map(row => [row.key,row.value]));
+  const validated = validateBackup({app:'PeraGym',version:1,data:{...legacy,theme:settings.theme,musicLinks:settings.musicLinks}});
+  const activeSession = legacyActiveSession(settings.activeSession, validated.workouts);
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(legacy)));
+  const fingerprint = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2,'0')).join('');
+  checkSession(session);
+  const importedAt = Date.now();
+  return localAccount.mutateData(data => {
+    checkSession(session);requireSnapshot(data);
+    if (data.legacyImport) return {ok:true,alreadyImported:true,counts:structuredClone(data.legacyImport.counts)};
+    if (RECORDS.some(name => data[name].length) || data.activeSession || data.musicLinks?.length) invalid('Importe os dados anteriores em um perfil vazio para preservar seus registros atuais.');
+    RECORDS.forEach(name => {data[name] = validated[name];});
+    data.theme = validated.theme;data.musicLinks = validated.musicLinks;data.activeSession = activeSession;
+    data.legacyImport = {source:LEGACY_DB_NAME,version:1,importedAt,fingerprint,counts};
+    return {ok:true,alreadyImported:false,counts};
   });
 }

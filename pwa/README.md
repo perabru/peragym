@@ -7,9 +7,11 @@ HTML, CSS e JavaScript com IndexedDB local. A publicação atual é [GitHub Page
 - Criar, editar e excluir fichas; registrar séries, repetições, cargas e descanso.
 - Histórico de treinos e gráficos de cargas e peso corporal.
 - Temas claro e escuro, instalação Android/iPhone e treinos offline.
-- Backup JSON dos registros e dos oito links recentes de música.
+- Cadastro, login com senha e banco cifrado separado por perfil local.
+- Desbloqueio pelo dispositivo com WebAuthn PRF quando disponível; senha como alternativa.
+- Importação explícita dos treinos da versão anterior e backup JSON dos registros e dos oito links recentes de música.
 - Player único para links do YouTube Music e Spotify, com controles conforme o serviço.
-- Autorização Spotify PKCE e SDK preparados para Client ID público configurado; retorno à própria rota do app.
+- Autorização Spotify PKCE e SDK; autorização Google para playlists e vídeos da API YouTube, com Client IDs configurados.
 - Loading independente do módulo principal, recuperação de falhas e instalação direta.
 - Pix opcional de R$ 1,99, sem bloqueio para instalar ou usar.
 
@@ -28,9 +30,19 @@ O manifesto, o escopo do service worker, os recursos locais e a instalação usa
 
 `server/worker.js`, `scripts/build.sh`, `db/` e `drizzle/` são da hospedagem anterior. O build do GitHub Pages não os publica nem depende deles. As tabelas antigas não são alteradas.
 
+## Perfis e banco local
+
+Cada perfil tem um vault AES-GCM em IndexedDB. A senha não é gravada: PBKDF2 deriva a chave usada para abrir o envelope da chave aleatória do perfil. O desbloqueio mantém essa chave apenas em memória. Perfis e dados não são enviados a um servidor. O cadastro começa vazio; a importação dos treinos anteriores é explícita e preserva o banco original.
+
+A biometria requer WebAuthn com extensão PRF, além da verificação do usuário no aparelho. Sem suporte, permanece disponível o login com senha. O navegador decide se oferece digital, Face ID ou PIN; o PeraGym não recebe dados biométricos. Apagar os dados do site remove contas e treinos locais. Não há recuperação por e-mail. Exporte os treinos antes de trocar de aparelho; o backup JSON é legível.
+
 ## Música
 
-Links de vídeos e playlists públicas são validados antes de carregar o IFrame oficial. O player fica visível, pausa quando o aplicativo é ocultado ou um formulário cobre a tela e oferece abertura externa quando o conteúdo não permite incorporação. O YouTube não vincula a conta Google ao player. O Spotify usa OAuth PKCE e SDK quando configurado, com tokens somente em memória e verificador temporário de uso único. O Client ID vem vazio: sem configuração, são usados links oficiais e nenhum estado de conta conectada é exibido. A ativação e os limites estão em [docs/spotify-setup.md](docs/spotify-setup.md).
+Links são validados antes de carregar o player oficial. O YouTube mantém seu IFrame visível, pausa quando o aplicativo é ocultado ou um formulário cobre a tela e oferece abertura externa quando o conteúdo não permite incorporação.
+
+Spotify usa OAuth PKCE e Web Playback SDK, com tokens somente em memória e verificador temporário de uso único. Google usa Google Identity Services e o escopo `youtube.readonly`; o aplicativo lista playlists e vídeos expostos pela API de dados do YouTube. A API não representa toda a biblioteca do YouTube Music e não libera reprodução Premium nem vídeos que bloqueiam incorporação.
+
+Os Client IDs públicos em `web/music-config.json` vêm vazios. Sem configuração, a interface informa que as conexões não estão ativadas e não exibe uma conta conectada. Não coloque Client Secrets nesse arquivo. A ativação e os limites estão em [Spotify](docs/spotify-setup.md) e [Google/YouTube](docs/youtube-setup.md).
 
 Referências: [IFrame](https://developers.google.com/youtube/iframe_api_reference) e [políticas](https://developers.google.com/youtube/terms/developer-policies).
 

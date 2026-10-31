@@ -6,6 +6,32 @@
   --chart-pink:#c91f78;--chart-cyan:#007d91;--grid:rgba(167,62,140,.09);--shadow:5px 5px 0 #b77ba72b;
   --button-ink:#fff7fc;--hero-text:#fff4ff;--wine:var(--pink);--wine-soft:#f6d8e8;--coral:var(--pink);--radius:5px
 }
+.app-locked .bottom-nav{display:none}
+.app-locked .app-shell{padding-bottom:30px}
+.app-locked .topbar{margin-bottom:0;border-bottom:0}
+.auth-layout{display:grid;grid-template-columns:1fr 1fr;max-width:920px;min-height:530px;margin:30px auto 50px;border:1px solid var(--line);background:var(--surface);box-shadow:8px 8px 0 var(--surface2)}
+.auth-cover{display:flex;flex-direction:column;justify-content:center;align-items:center;gap:30px;overflow:hidden;position:relative;padding:45px 30px;background:linear-gradient(155deg,#321940,#160b2c);color:#fff0fa;border-right:1px solid var(--line)}
+.auth-cover::before{content:'';position:absolute;inset:0;pointer-events:none;background:repeating-linear-gradient(0deg,transparent 0 3px,#120a2b28 3px 4px),radial-gradient(ellipse at 50% 55%,#c9218266,transparent 70%)}
+.auth-cover>*{position:relative}
+.auth-cover .eyebrow{color:#6ce6ec;font-size:10px;letter-spacing:2px}
+.auth-cassette{width:min(100%,290px);transform:rotate(-9deg);filter:drop-shadow(9px 14px 0 #08031b66)}
+.auth-cover>p{font:42px ViceScript,cursive;color:#ff89c7;text-shadow:2px 2px #100b26}
+.auth-side{font:9px ui-monospace,monospace;letter-spacing:3px;color:#c2afda}
+.auth-card{padding:30px 32px}
+.auth-tabs{display:flex;gap:6px;padding:4px;background:var(--surface2);margin-bottom:30px;border:1px solid var(--line)}
+.auth-tabs button{flex:1;min-height:42px;font-weight:750;font-size:12px;background:transparent;color:var(--muted)}
+.auth-tabs button.active{background:var(--pink);color:var(--button-ink);box-shadow:2px 2px 0 #100b2622}
+.auth-card h1{font-size:25px;margin:8px 0 10px}
+.auth-subtitle{font-size:13px;color:var(--muted);margin-bottom:22px}
+.auth-card form{display:grid;gap:15px}
+.auth-card label{display:grid;gap:6px;font-size:12px;font-weight:700;color:var(--ink)}
+.auth-card input{width:100%;min-width:0;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:3px;padding:11px 12px;min-height:46px;font-size:16px}
+.auth-card .button{margin-top:3px;font-size:12px;min-height:46px}
+.auth-footnote{font-size:11px;line-height:1.7;color:var(--muted);margin-top:22px}
+.auth-error{font-size:12px;color:var(--pink);padding:10px;border-left:2px solid var(--pink);background:var(--surface2)}
+.local-profile-card h2{overflow-wrap:anywhere}
+@media(max-width:650px){.auth-layout{grid-template-columns:1fr;margin:12px auto 25px;max-width:410px;min-height:0}.auth-cover{padding:20px;gap:12px;border-right:0;border-bottom:1px solid var(--line);min-height:150px}.auth-cover .eyebrow{font-size:8px}.auth-cassette{width:125px;position:absolute;right:30px;top:40px;transform:rotate(-12deg)}.auth-cover>p{align-self:flex-start;font-size:33px;margin:8px 0 5px 0}.auth-cover .eyebrow{align-self:flex-start}.auth-side{align-self:flex-start;font-size:8px}.auth-card{padding:22px}.auth-tabs{margin-bottom:23px}.auth-card h1{font-size:23px}.auth-subtitle{margin-bottom:18px}}
+@media(max-width:360px){.auth-card{padding:18px}.auth-cover{padding:18px}.auth-cassette{width:100px;right:16px;top:48px}.auth-cover>p{font-size:30px}}
 body.dark{
   color-scheme:dark;--bg:#100b26;--surface:#191132;--surface2:#251943;--ink:#fff3fc;--muted:#b9a4cb;--line:#47335f;
   --pink:#ff4fa8;--cyan:#49e5f4;--violet:#b288ff;--yellow:#ffd278;--frame:#89709e;

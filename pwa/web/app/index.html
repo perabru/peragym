@@ -5,23 +5,23 @@
   <meta name="referrer" content="strict-origin-when-cross-origin">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#fff0f6">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://www.youtube.com https://s.ytimg.com https://sdk.scdn.co; style-src 'self'; img-src 'self' data: https://i.scdn.co https://*.scdn.co; connect-src 'self' https://accounts.spotify.com https://api.spotify.com https://*.spotify.com https://*.scdn.co wss://*.spotify.com; media-src 'self' blob: https://*.spotify.com https://*.scdn.co https://*.spotifycdn.com; worker-src 'self'; frame-src https://www.youtube.com https://open.spotify.com https://sdk.scdn.co; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://www.youtube.com https://s.ytimg.com https://sdk.scdn.co https://accounts.google.com; style-src 'self' https://accounts.google.com; img-src 'self' data: https://i.scdn.co https://*.scdn.co; connect-src 'self' https://accounts.google.com https://www.googleapis.com https://oauth2.googleapis.com https://accounts.spotify.com https://api.spotify.com https://*.spotify.com https://*.scdn.co wss://*.spotify.com; media-src 'self' blob: https://*.spotify.com https://*.scdn.co https://*.spotifycdn.com; worker-src 'self'; frame-src https://www.youtube.com https://open.spotify.com https://sdk.scdn.co https://accounts.google.com; object-src 'none'; base-uri 'none'; form-action 'none'">
   <title>PeraGym</title>
-  <link rel="stylesheet" href="style.css?v=3.3.0">
-  <link rel="manifest" href="/manifest.webmanifest?v=3.3.0">
-  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png?v=3.3.0">
+  <link rel="stylesheet" href="style.css?v=3.4.0">
+  <link rel="manifest" href="/manifest.webmanifest?v=3.4.0">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png?v=3.4.0">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <script src="boot.js?v=3.3.0"></script>
-  <script type="module" src="app.js?v=3.3.0"></script>
-  <script src="/pwa.js?v=3.3.0" defer></script>
+  <script src="boot.js?v=3.4.0"></script>
+  <script type="module" src="app.js?v=3.4.0"></script>
+  <script src="/pwa.js?v=3.4.0" defer></script>
 </head>
 <body>
   <div id="loading" class="loading-screen" role="status" aria-live="polite" aria-busy="true" aria-label="Carregando seus treinos">
     <div class="loading-cassette" aria-hidden="true"><img src="/assets/cassette.svg" alt=""><span class="tape-wheel wheel-left"></span><span class="tape-wheel wheel-right"></span></div>
     <h1 class="loading-brand">PeraGym</h1><span class="loading-kicker">VICE TRAINING</span>
     <div class="loading-meter" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
-    <p id="loading-status">Abrindo suas fichas...</p>
+    <p id="loading-status">Abrindo PeraGym...</p>
     <section id="loading-recovery" class="loading-recovery" hidden aria-label="Recuperar a abertura do aplicativo">
       <p id="loading-error-message" class="loading-error-message">Tente novamente. Seus dados continuam salvos neste aparelho.</p>
       <button id="loading-retry" class="loading-retry button primary" type="button">Tentar novamente</button>
