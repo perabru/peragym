@@ -17,19 +17,19 @@
   ],
   "icons": [
     {
-      "src": "/peragym/docs/icons/icon-192.png?v=3.2.0",
+      "src": "/peragym/docs/icons/icon-192.png?v=3.3.0",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/peragym/docs/icons/icon-512.png?v=3.2.0",
+      "src": "/peragym/docs/icons/icon-512.png?v=3.3.0",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/peragym/docs/icons/maskable-512.png?v=3.2.0",
+      "src": "/peragym/docs/icons/maskable-512.png?v=3.3.0",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"

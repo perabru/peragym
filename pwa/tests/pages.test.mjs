@@ -69,6 +69,7 @@ test('finite URL rewriting retains external players, provider origin checks and 
   assert.ok(rewrittenJs.includes("const outside = 'https://example.com/app/';"));
   assert.ok(rewrittenJs.includes(`const icon = '${basePath}assets/cassette.svg';`));
 
+  assert.equal(await builtText('app/spotify-account.js'),await readFile(path.join(sourceRoot,'web/app/spotify-account.js'),'utf8'));
   const moduleSource = await builtText('app/music-links.js');
   const music = await import(`data:text/javascript;base64,${Buffer.from(moduleSource).toString('base64')}`);
   const media = music.parseYouTubeLink('https://music.youtube.com/watch?v=M7lc1UVf-VE');

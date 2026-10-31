@@ -126,6 +126,9 @@ export function rewritePublicText(source, relativePath, basePath = DEFAULT_BASE)
   }
   if (extension === '.css') return cssUrls(source, base);
   if (extension !== '.js') return source;
+  // OAuth compares the application's pathname with /index.html. It has no
+  // public asset URLs and must remain identical across publishing bases.
+  if (relativePath === 'app/spotify-account.js') return source;
   let result = javascriptUrls(source, base);
   if (relativePath === 'pwa.js') {
     result = result.replace(/(\bscope\s*:\s*)(["'])\/\2/g, (_, prefix, quote) => prefix + quote + base + quote);

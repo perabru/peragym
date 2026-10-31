@@ -84,7 +84,7 @@ test('free offline preparation downloads the public app without calling account 
   });
   await h.prepare();
   assert.equal(h.messages.at(-1).type,'PERAGYM_OFFLINE_READY');
-  assert.deepEqual(downloads.sort(),['/app/app.js','/app/charts.js','/app/db.js','/app/index.html','/app/music-links.js','/app/music-player.js','/app/style.css','/assets/cassette.svg','/assets/fonts/bungee.ttf','/assets/fonts/yellowtail.ttf','/assets/night-drive.jpg','/assets/palms.svg']);
+  assert.deepEqual(downloads.sort(),['/app/app.js','/app/boot.js','/app/charts.js','/app/db.js','/app/index.html','/app/music-links.js','/app/music-player.js','/app/spotify-account.js','/app/spotify-playback.js','/app/style.css','/assets/cassette.svg','/assets/fonts/bungee.ttf','/assets/fonts/yellowtail.ttf','/assets/night-drive.jpg','/assets/palms.svg']);
 });
 
 test('complete app opens offline with no session, cookie or donation requirement', async () => {
@@ -127,7 +127,7 @@ test('migration preserves an older working offline shell until the complete free
   assert(h.cacheData.has('peragym-2.1.0-app'));
   assert.equal(await (await h.fetch('/app/','navigate')).text(),'/app/index.html');
   online=true;await h.prepare();
-  assert(h.cacheData.has('peragym-3.2.0-app'));assert.equal(h.cacheData.has('peragym-2.1.0-app'),false);
+  assert(h.cacheData.has('peragym-3.3.0-app'));assert.equal(h.cacheData.has('peragym-2.1.0-app'),false);
   assert.equal(h.messages.at(-1).type,'PERAGYM_OFFLINE_READY');
 });
 
@@ -136,14 +136,14 @@ test('transient asset failures preserve the offline app and never touch the loca
   const h=harness(async url=>failed?new Response('temporarily unavailable',{status:503}):appAsset(new URL(url).pathname));
   await h.prepare();failed=true;await h.prepare();
   assert.equal((await h.fetch('/app/','navigate')).status,200);
-  assert(h.cacheData.has('peragym-3.2.0-app'));
+  assert(h.cacheData.has('peragym-3.3.0-app'));
   assert.equal(workerSource.includes('indexedDB.deleteDatabase'),false);
 });
 
 test('donation APIs, session failures, admin, sign-in and unknown URLs are never intercepted or cached', async () => {
   const h=harness(async url=>appAsset(new URL(url).pathname));
   await h.prepare();const names=[...h.cacheData.keys()];
-  for(const path of ['/api/donation','/api/session','/api/orders','/admin','/admin/orders','/signin-with-chatgpt','/callback','/app/unknown.js','https://external.example/app/'])assert.equal(await h.fetch(path),undefined);
+  for(const path of ['/app/?code=one-time-code&state=opaque','/app/?error=access_denied&state=opaque','/api/donation','/api/session','/api/orders','/admin','/admin/orders','/signin-with-chatgpt','/callback','/app/unknown.js','https://external.example/app/'])assert.equal(await h.fetch(path),undefined);
   assert.equal(await h.fetch('/app/app.js','same-origin','POST'),undefined);
   assert.deepEqual([...h.cacheData.keys()],names);
 });
@@ -167,8 +167,8 @@ test('night theme fonts and imagery are cached offline before the previous app s
   assert(h.cacheData.has('peragym-2.1.0-app'));
   missingFont=false;await h.prepare();
   assert.equal(h.cacheData.has('peragym-2.1.0-app'),false);
-  assert(h.cacheData.has('peragym-3.2.0-app'));
-  const current=h.cacheData.get('peragym-3.2.0-public');
+  assert(h.cacheData.has('peragym-3.3.0-app'));
+  const current=h.cacheData.get('peragym-3.3.0-public');
   for(const path of ['/assets/cassette.svg','/assets/night-drive.jpg','/assets/palms.svg','/assets/fonts/bungee.ttf','/assets/fonts/yellowtail.ttf'])assert(current.has(`${origin}${path}`));
   const imagery=await h.fetch('/assets/night-drive.jpg');assert.equal(imagery.headers.get('Content-Type'),'image/jpeg; charset=utf-8');
 });

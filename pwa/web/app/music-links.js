@@ -1,5 +1,7 @@
 /** Normalize user-supplied YouTube links without fetching remote metadata. */
 const YOUTUBE_HOSTS = new Set(['youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com']);
+const SPOTIFY_ID = /^[A-Za-z0-9]{22}$/;
+const SPOTIFY_KINDS = new Set(['track', 'playlist', 'album']);
 const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
 const PLAYLIST_ID = /^[A-Za-z0-9_-]{8,150}$/;
 const UNSAFE_TEXT = /[\u0000-\u001f\u007f<>\\]|%3[ce]/i;
@@ -99,5 +101,59 @@ export function makeEmbedUrl(media, origin) {
   url.searchParams.set('playsinline', '1');
   url.searchParams.set('autoplay', '0');
   url.searchParams.set('rel', '0');
+  return url.toString();
+}
+
+function spotifyResult(kind, id) {
+  if (!SPOTIFY_KINDS.has(kind) || typeof id !== 'string' || !SPOTIFY_ID.test(id)) {
+    invalid('Use o link de uma faixa, playlist ou álbum do Spotify com identificador de 22 caracteres.');
+  }
+  const labels = {track:'faixa', playlist:'playlist', album:'álbum'};
+  return {
+    provider:'spotify', kind, id, uri:`spotify:${kind}:${id}`,
+    url:`https://open.spotify.com/${kind}/${id}`, label:`Spotify · ${labels[kind]} · ${id}`
+  };
+}
+
+/** Accept only canonicalizable YouTube or Spotify links; never fetch short URLs. */
+export function parseMusicLink(raw) {
+  if (typeof raw !== 'string' || !raw.trim()) invalid('Cole um link do YouTube ou Spotify.');
+  if (raw.length > 2048) invalid('Use um link de compartilhamento com até 2.048 caracteres.');
+  if (UNSAFE_TEXT.test(raw)) invalid('Cole somente o endereço da música, sem código HTML ou caracteres de controle.');
+  const text = raw.trim();
+  if (/^spotify:/i.test(text)) {
+    const match = /^spotify:(track|playlist|album):([A-Za-z0-9]{22})$/.exec(text);
+    if (!match) invalid('Use uma URI no formato spotify:track:ID, spotify:playlist:ID ou spotify:album:ID.');
+    return spotifyResult(match[1], match[2]);
+  }
+
+  let url;
+  try { url = new URL(text); } catch { invalid('O endereço não é um link válido do YouTube ou Spotify.'); }
+  if (url.hostname === 'spotify.link' || url.hostname === 'www.spotify.link') {
+    invalid('Abra o link curto no Spotify e copie o link completo de open.spotify.com.');
+  }
+  if (url.hostname !== 'open.spotify.com') return {provider:'youtube', ...parseYouTubeLink(raw)};
+
+  if (url.protocol !== 'https:') invalid('Use um link HTTPS de open.spotify.com.');
+  if (url.username || url.password || hasUserInfo(text)) invalid('O link do Spotify não pode conter usuário ou senha.');
+  // URL normalizes an explicit :443 away, so inspect the original authority too.
+  const parts = /^[a-z][a-z0-9+.-]*:\/\/([^/?#]*)([^?#]*)/i.exec(text);
+  if (!parts || parts[1].includes(':') || url.port) invalid('O link do Spotify não pode conter uma porta.');
+  if (!/^open\.spotify\.com$/i.test(parts[1])) invalid('Use o endereço completo de open.spotify.com, sem alterações no domínio.');
+  // Reject dot segments before URL normalization, as well as encoded/extra paths.
+  if (parts[2] !== url.pathname) invalid('Copie o link completo da faixa, playlist ou álbum no Spotify.');
+  const match = /^\/(?:intl-[a-z]{2}\/)?(track|playlist|album)\/([A-Za-z0-9]{22})\/?$/.exec(url.pathname);
+  if (!match) invalid('Use o link completo de uma faixa, playlist ou álbum de open.spotify.com.');
+  return spotifyResult(match[1], match[2]);
+}
+
+/** Construct an official Spotify iframe URL from checked identifiers only. */
+export function makeSpotifyEmbedUrl(media) {
+  if (!media || typeof media !== 'object' || Array.isArray(media) || (media.provider !== undefined && media.provider !== 'spotify')) {
+    invalid('Escolha uma faixa, playlist ou álbum válido do Spotify.');
+  }
+  const checked = spotifyResult(media.kind, media.id);
+  const url = new URL(`https://open.spotify.com/embed/${checked.kind}/${checked.id}`);
+  url.searchParams.set('theme', '0');
   return url.toString();
 }

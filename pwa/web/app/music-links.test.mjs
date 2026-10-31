@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {parseYouTubeLink, makeEmbedUrl} from './music-links.js';
+import {parseYouTubeLink, makeEmbedUrl, parseMusicLink, makeSpotifyEmbedUrl} from './music-links.js';
 
 const VIDEO='dQw4w9WgXcQ';
 const PLAYLIST='PLabcDEF_1234567890-xyz';
@@ -109,4 +109,91 @@ test('embed builders revalidate IDs and prevent origin injection or non-origin v
   assert.throws(()=>makeEmbedUrl({kind:'playlist',listId:'WL'},'https://safe.example'));
   assert.throws(()=>makeEmbedUrl({kind:'playlist',listId:'RDAMVM'+VIDEO},'https://safe.example'));
   assert.throws(()=>makeEmbedUrl({kind:'html',url:'https://safe.example'},'https://safe.example'));
+});
+
+const SPOTIFY='0Lr4kGOYn9l83EjuK6cZFQ';
+
+test('generic music parsing preserves YouTube contracts and adds only the provider discriminator',()=>{
+  for(const raw of [`https://youtu.be/${VIDEO}`,`https://music.youtube.com/playlist?list=${PLAYLIST}`]){
+    assert.deepEqual(parseMusicLink(raw),{provider:'youtube',...parseYouTubeLink(raw)});
+    assert.equal(makeEmbedUrl(parseMusicLink(raw),'https://peragym.example'),makeEmbedUrl(parseYouTubeLink(raw),'https://peragym.example'));
+  }
+});
+
+test('Spotify tracks, playlists and albums normalize HTTPS/locale links and URIs without retaining tracking',()=>{
+  for(const [kind,label] of [['track','faixa'],['playlist','playlist'],['album','álbum']]){
+    const expected={provider:'spotify',kind,id:SPOTIFY,uri:`spotify:${kind}:${SPOTIFY}`,url:`https://open.spotify.com/${kind}/${SPOTIFY}`,label:`Spotify · ${label} · ${SPOTIFY}`};
+    for(const raw of [
+      `https://open.spotify.com/${kind}/${SPOTIFY}`,
+      ` https://OPEN.SPOTIFY.COM/intl-pt/${kind}/${SPOTIFY}/?si=share&utm_source=copy#fragment `,
+      `https://open.spotify.com/intl-en/${kind}/${SPOTIFY}?si=a&si=b`,
+      `spotify:${kind}:${SPOTIFY}`
+    ])assert.deepEqual(parseMusicLink(raw),expected,raw);
+  }
+});
+
+test('Spotify short links require the complete official link and are not resolved through the network',()=>{
+  const original=globalThis.fetch;
+  globalThis.fetch=()=>{assert.fail('Music link parsing must never make a network request');};
+  try {
+    for(const raw of ['https://spotify.link/shortcode','https://www.spotify.link/shortcode'])assert.throws(()=>parseMusicLink(raw),/link completo de open\.spotify\.com/);
+    assert.equal(parseMusicLink(`spotify:track:${SPOTIFY}`).id,SPOTIFY);
+  } finally {globalThis.fetch=original;}
+});
+
+test('Spotify parser rejects credentials, suffix/encoded hosts, every explicit port and unsafe schemes',()=>{
+  for(const raw of [
+    `https://open.spotify.com.evil.example/track/${SPOTIFY}`,
+    `https://www.open.spotify.com/track/${SPOTIFY}`,
+    `https://spotify.com/track/${SPOTIFY}`,
+    `https://open%2Espotify.com/track/${SPOTIFY}`,
+    `https://%6fpen.spotify.com/track/${SPOTIFY}`,
+    `https://user:password@open.spotify.com/track/${SPOTIFY}`,
+    `https://@open.spotify.com/track/${SPOTIFY}`,
+    `https://:@open.spotify.com/track/${SPOTIFY}`,
+    `https://open.spotify.com@evil.example/track/${SPOTIFY}`,
+    `https://open.spotify.com:443/track/${SPOTIFY}`,
+    `https://open.spotify.com:80/track/${SPOTIFY}`,
+    `https://open.spotify.com:8080/track/${SPOTIFY}`,
+    `http://open.spotify.com/track/${SPOTIFY}`,
+    `ftp://open.spotify.com/track/${SPOTIFY}`,
+    `//open.spotify.com/track/${SPOTIFY}`,
+    `javascript:open('https://open.spotify.com/track/${SPOTIFY}')`,
+    `data:text/plain,spotify:track:${SPOTIFY}`
+  ])assert.throws(()=>parseMusicLink(raw),Error,raw);
+});
+
+test('Spotify parser rejects malformed IDs, unsupported kinds and ambiguous or normalized paths',()=>{
+  for(const id of [SPOTIFY.slice(1),SPOTIFY+'x','_'.repeat(22),'-'.repeat(22),'á'.repeat(22),'%30'+SPOTIFY.slice(1)]){
+    assert.throws(()=>parseMusicLink(`https://open.spotify.com/track/${id}`));
+    assert.throws(()=>parseMusicLink(`spotify:track:${id}`));
+  }
+  for(const path of [
+    `track/track/${SPOTIFY}`,`track/${SPOTIFY}/extra`,`track/${SPOTIFY}//`,
+    `intl-en/intl-pt/track/${SPOTIFY}`,`intl-pt-BR/track/${SPOTIFY}`,
+    `./track/${SPOTIFY}`,`album/../track/${SPOTIFY}`,`intl-en/%2e%2e/track/${SPOTIFY}`,
+    `/track/${SPOTIFY}`,`embed/track/${SPOTIFY}`,`artist/${SPOTIFY}`,`episode/${SPOTIFY}`
+  ])assert.throws(()=>parseMusicLink(`https://open.spotify.com/${path}`),Error,path);
+  for(const raw of [
+    `spotify:show:${SPOTIFY}`,`spotify://track/${SPOTIFY}`,`spotify:track:${SPOTIFY}?si=share`,
+    `<iframe src="https://open.spotify.com/embed/track/${SPOTIFY}"></iframe>`,
+    `https://open.spotify.com/track/${SPOTIFY}?html=%3Cscript%3E`,
+    `https://open.spoti\nfy.com/track/${SPOTIFY}`,
+    `https:\\open.spotify.com\\track\\${SPOTIFY}`,
+    `https://open.spotify.com/track/${SPOTIFY}?si=${'x'.repeat(2048)}`,
+    '',null,123
+  ])assert.throws(()=>parseMusicLink(raw),Error,String(raw));
+});
+
+test('Spotify embed URLs use checked kinds and IDs, fixed origin and theme, never supplied HTML/URLs',()=>{
+  for(const kind of ['track','playlist','album']){
+    const media=parseMusicLink(`spotify:${kind}:${SPOTIFY}`);
+    const url=new URL(makeSpotifyEmbedUrl({...media,url:'javascript:alert(1)',uri:'spotify:track:bad',html:'<iframe>'}));
+    assert.equal(url.origin,'https://open.spotify.com');assert.equal(url.pathname,`/embed/${kind}/${SPOTIFY}`);
+    assert.deepEqual(Object.fromEntries(url.searchParams),{theme:'0'});
+    assert.equal(makeSpotifyEmbedUrl({kind,id:SPOTIFY}),url.toString());
+  }
+  for(const media of [null,[],{},'<iframe>',{provider:'youtube',kind:'track',id:SPOTIFY},
+    {kind:'episode',id:SPOTIFY},{kind:'track',id:'bad-id'},{kind:'track',id:SPOTIFY+'/path'},
+    {kind:'track',id:'<script>'},{kind:'track',url:`https://open.spotify.com/track/${SPOTIFY}`}])assert.throws(()=>makeSpotifyEmbedUrl(media));
 });

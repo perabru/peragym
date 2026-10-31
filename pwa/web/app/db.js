@@ -1,5 +1,5 @@
 /* PeraGym's personal data stays in this browser's private IndexedDB. */
-import {parseYouTubeLink} from './music-links.js?v=3.2.0';
+import {parseMusicLink} from './music-links.js?v=3.3.0';
 
 const DB_NAME = 'peragym-local';
 const VERSION = 1;
@@ -29,11 +29,11 @@ const integer = (raw, min, max, message) => {
 };
 const validId = value => typeof value === 'string' && /^[a-zA-Z0-9-]{1,80}$/.test(value);
 function validateMusicLinks(input) {
-  if (!Array.isArray(input) || input.length > 8) invalid('Salve até 8 links públicos do YouTube ou YouTube Music.');
+  if (!Array.isArray(input) || input.length > 8) invalid('Salve até 8 links do YouTube ou Spotify.');
   return Array.from(input, raw => {
-    if (typeof raw !== 'string') invalid('Cada música precisa de um link público válido do YouTube ou YouTube Music.');
+    if (typeof raw !== 'string') invalid('Cada música precisa de um link válido do YouTube ou Spotify.');
     let parsed;
-    try { parsed = parseYouTubeLink(raw); } catch { invalid('Um link de música não é um endereço público válido do YouTube ou YouTube Music.'); }
+    try { parsed = parseMusicLink(raw); } catch (error) { invalid(error instanceof Error ? error.message : 'Um link de música não é válido.'); }
     if (!parsed || typeof parsed.url !== 'string' || !parsed.url) invalid('Um link de música não é válido.');
     // Persist only the canonical URL, never the source URL or other parser metadata.
     return parsed.url;

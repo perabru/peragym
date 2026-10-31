@@ -11,6 +11,10 @@ const prefix='/peragym/docs/';
 const server=http.createServer(async(req,res)=>{
  try{
   const url=new URL(req.url,'http://localhost');
+  if(req.method==='GET'&&url.pathname==='/__qa/responsive'){
+   const fixture=(await readFile(path.join(repo,'pwa/tests/responsive-preview.html'),'utf8')).replaceAll('src="/app/"','src="/peragym/docs/app/"').replace('src="/"','src="/peragym/docs/"');
+   res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});return res.end(fixture);
+  }
   if(!['GET','HEAD'].includes(req.method)){res.writeHead(405);return res.end();}
   if(url.pathname==='/'||url.pathname==='/peragym'){res.writeHead(303,{Location:'/peragym/'});return res.end();}
   let file;

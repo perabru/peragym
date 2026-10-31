@@ -95,3 +95,40 @@ test('legacy v1 backups default music links empty and invalid music import is at
  assert.deepEqual(restored.loadHistory,before.loadHistory);
  assert.equal(restored.theme,before.theme);
 });
+
+test('Spotify and YouTube links round-trip as canonical URL strings in unchanged backup v1',async()=>{
+ const id='0Lr4kGOYn9l83EjuK6cZFQ';
+ const source=[`spotify:track:${id}`,`https://open.spotify.com/intl-pt/playlist/${id}?si=share`,
+  `https://open.spotify.com/album/${id}/#shared`,'https://youtu.be/dQw4w9WgXcQ?si=share'];
+ const expected=[`https://open.spotify.com/track/${id}`,`https://open.spotify.com/playlist/${id}`,
+  `https://open.spotify.com/album/${id}`,'https://music.youtube.com/watch?v=dQw4w9WgXcQ'];
+ await db.setSetting('musicLinks',source);
+ assert.deepEqual((await db.load()).musicLinks,expected);
+ assert.equal(source[0],`spotify:track:${id}`);
+ const backup=await db.exportBackup();assert.equal(backup.version,1);assert.deepEqual(backup.data.musicLinks,expected);
+ await db.setSetting('musicLinks',[]);await db.importBackup(backup);
+ assert.deepEqual((await db.load()).musicLinks,expected);
+ const rawBackup=structuredClone(backup);rawBackup.data.musicLinks=source;
+ await db.importBackup(rawBackup);assert.deepEqual((await db.load()).musicLinks,expected);
+});
+
+test('invalid Spotify preferences and imports leave all existing IndexedDB data unchanged',async()=>{
+ const id='0Lr4kGOYn9l83EjuK6cZFQ';
+ const before=await db.load();const backup=await db.exportBackup();
+ for(const links of [
+  [`spotify:episode:${id}`],[`https://open.spotify.com:443/track/${id}`],
+  [`https://open.spotify.com.evil.example/track/${id}`],['https://spotify.link/shortcode'],
+  [`spotify:track:${id.slice(1)}`],Array(9).fill(`spotify:track:${id}`),
+  ['https://youtu.be/dQw4w9WgXcQ',`https://open.spotify.com/track/${id}/extra`]
+ ]){
+  await assert.rejects(()=>db.setSetting('musicLinks',links));assert.deepEqual(await db.load(),before);
+  const corrupted=structuredClone(backup);corrupted.data.musicLinks=links;
+  corrupted.data.workouts=[];corrupted.data.bodyWeights=[];corrupted.data.theme='light';
+  await assert.rejects(()=>db.importBackup(corrupted));assert.deepEqual(await db.load(),before);
+ }
+ await db.setSetting('musicLinks',Array(8).fill(`spotify:track:${id}`));
+ assert.equal((await db.load()).musicLinks.length,8);
+ const legacy=structuredClone(backup);delete legacy.data.musicLinks;await db.importBackup(legacy);
+ assert.deepEqual((await db.load()).musicLinks,[]);
+ assert.deepEqual((await db.load()).bodyWeights,before.bodyWeights);
+});

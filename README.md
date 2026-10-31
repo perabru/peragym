@@ -1,8 +1,10 @@
-# PeraGym 3.2
+# PeraGym 3.3
 
 **[Abrir o site](https://perabru.github.io/peragym/) · [Abrir o aplicativo](https://perabru.github.io/peragym/docs/app/)**
 
 PWA gratuito para Android e iPhone. Fichas de treino, cargas em quilos, peso corporal, gráficos e histórico no banco local do aparelho. Visual neon e fita cassete nos botões de salvar.
+
+A abertura mostra uma tela de carregamento com recuperação de falhas. O site e a tela inicial do app foram simplificados; instalar abre diretamente o aplicativo e o guia do aparelho.
 
 ## Instalação
 
@@ -13,7 +15,7 @@ Abra uma vez com internet para preparar os treinos offline. Em **Ajustes**, salv
 
 ## Música e Pix
 
-A aba Música carrega links públicos no player oficial do YouTube. Precisa de internet e permissão de incorporação do conteúdo. O acesso à conta abre no YouTube Music; o PeraGym não coleta senha ou importa biblioteca privada.
+A aba Música aceita links do YouTube Music e Spotify em um único player. O YouTube continua com o player oficial e acesso externo à conta; não importa biblioteca privada. O Spotify dispõe de autorização OAuth PKCE com retorno ao PeraGym e engine Web Playback SDK: para ativar contas, é necessário configurar o Client ID público e o callback da aplicação Spotify. O arquivo padrão vem vazio; a interface não simula uma conta conectada. Consulte [ativação Spotify](pwa/docs/spotify-setup.md). Streaming completo pelo SDK requer Premium e as permissões e limites vigentes do Spotify. Nenhuma senha ou Client Secret é coletado.
 
 A doação Pix de R$ 1,99 é opcional. O aplicativo pode ser instalado e usado sem doar. O QR Code e o Copia e Cola funcionam no site estático, sem servidor de pagamento.
 

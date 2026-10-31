@@ -8,7 +8,9 @@ HTML, CSS e JavaScript com IndexedDB local. A publicação atual é [GitHub Page
 - Histórico de treinos e gráficos de cargas e peso corporal.
 - Temas claro e escuro, instalação Android/iPhone e treinos offline.
 - Backup JSON dos registros e dos oito links recentes de música.
-- Player oficial do YouTube para links públicos; acesso à conta no site do YouTube Music.
+- Player único para links do YouTube Music e Spotify, com controles conforme o serviço.
+- Autorização Spotify PKCE e SDK preparados para Client ID público configurado; retorno à própria rota do app.
+- Loading independente do módulo principal, recuperação de falhas e instalação direta.
 - Pix opcional de R$ 1,99, sem bloqueio para instalar ou usar.
 
 ## Build estático
@@ -28,7 +30,7 @@ O manifesto, o escopo do service worker, os recursos locais e a instalação usa
 
 ## Música
 
-Links de vídeos e playlists públicas são validados antes de carregar o IFrame oficial. O player fica visível, pausa quando o aplicativo é ocultado ou um formulário cobre a tela e oferece abertura externa quando o conteúdo não permite incorporação. Não há coleta de credenciais Google, OAuth de conta, biblioteca privada ou reprodução Premium em segundo plano.
+Links de vídeos e playlists públicas são validados antes de carregar o IFrame oficial. O player fica visível, pausa quando o aplicativo é ocultado ou um formulário cobre a tela e oferece abertura externa quando o conteúdo não permite incorporação. O YouTube não vincula a conta Google ao player. O Spotify usa OAuth PKCE e SDK quando configurado, com tokens somente em memória e verificador temporário de uso único. O Client ID vem vazio: sem configuração, são usados links oficiais e nenhum estado de conta conectada é exibido. A ativação e os limites estão em [docs/spotify-setup.md](docs/spotify-setup.md).
 
 Referências: [IFrame](https://developers.google.com/youtube/iframe_api_reference) e [políticas](https://developers.google.com/youtube/terms/developer-policies).
 

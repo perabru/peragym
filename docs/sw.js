@@ -1,7 +1,7 @@
 'use strict';
 
 // The app is free. Only static assets are cached; personal records stay in IndexedDB.
-const VERSION = 'peragym-pages-487e833a71ce-3.2.0';
+const VERSION = 'peragym-pages-487e833a71ce-3.3.0';
 const PUBLIC_CACHE = `${VERSION}-public`;
 const APP_CACHE = `${VERSION}-app`;
 const CACHE_PREFIX = 'peragym-pages-487e833a71ce-';
@@ -19,7 +19,7 @@ const PUBLIC_PATHS = new Set([
 const BASE_APP_PATHS = new Set([
   '/peragym/docs/app/', '/peragym/docs/app/index.html', '/peragym/docs/app/style.css', '/peragym/docs/app/app.js', '/peragym/docs/app/db.js', '/peragym/docs/app/charts.js'
 ]);
-const APP_PATHS = new Set([...BASE_APP_PATHS, '/peragym/docs/app/music-links.js', '/peragym/docs/app/music-player.js']);
+const APP_PATHS = new Set([...BASE_APP_PATHS, '/peragym/docs/app/music-links.js', '/peragym/docs/app/music-player.js', '/peragym/docs/app/boot.js', '/peragym/docs/app/spotify-account.js', '/peragym/docs/app/spotify-playback.js']);
 const OFFLINE_PATH = '/peragym/docs/offline.html';
 let preparingOffline;
 
@@ -210,6 +210,8 @@ self.addEventListener('fetch', event => {
   const request = event.request;
   const url = new URL(request.url);
   if (request.method !== 'GET' || url.origin !== self.location.origin) return;
+  // Authorization callbacks must never be written to offline caches.
+  if (url.searchParams.has('state') && (url.searchParams.has('code') || url.searchParams.has('error'))) return;
   // Donation APIs, administration and sign-in always go directly to the server.
   if (url.pathname.startsWith('/api/') || url.pathname === '/admin' || url.pathname.startsWith('/admin/') || url.pathname.startsWith('/signin-') || url.pathname.startsWith('/signout-') || url.pathname === '/callback') return;
   if (APP_PATHS.has(url.pathname)) {
