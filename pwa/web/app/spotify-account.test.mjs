@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {setTimeout as delay} from 'node:timers/promises';
 import {webcrypto, createHash} from 'node:crypto';
 import {createSpotifyAccount} from './spotify-account.js';
 
@@ -323,7 +324,8 @@ test('disconnect aborts a pending playlist request immediately even when fetch i
 });
 
 async function waitFor(predicate) {
-  for(let i=0;i<100&&!predicate();i++)await new Promise(resolve=>setImmediate(resolve));
+  const deadline=performance.now()+3000;
+  while(!predicate()&&performance.now()<deadline)await delay(2);
   assert.ok(predicate(),'Expected asynchronous PKCE preparation to complete');
 }
 async function beginPopup(env) {

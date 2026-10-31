@@ -17,7 +17,7 @@ const flush=async()=>{for(let n=0;n<12;n++)await Promise.resolve();};
 async function harness(t,{activeSession=null,confirm=true}={}){
  let now=1_800_000_100_000,model=initialData(),renderCount=0;
  model.activeSession=clone(activeSession);
- const calls=[],notices=[],confirmations=[],playerCalls=[],loadingCalls=[],deferred=new Map(),timers=new Map(),elements=new Map();
+ const calls=[],notices=[],confirmations=[],playerCalls=[],loadingCalls=[],editorEvents=[],deferred=new Map(),timers=new Map(),elements=new Map();
  let nextTimer=0;
  function element(selector){
   if(elements.has(selector))return elements.get(selector);
@@ -41,6 +41,8 @@ async function harness(t,{activeSession=null,confirm=true}={}){
   load:()=>commit('load',[],()=>clone(model)),
   setSetting:(key,value)=>commit('setSetting',[key,value],args=>{model[args[0]]=clone(args[1]);return {ok:true};}),
   finishWorkout:input=>commit('finishWorkout',[input],([row])=>{model.sessions.push({...row,id:'history-new',workoutName:model.workouts.find(w=>w.id===row.workoutId)?.name,completedAt:now});model.activeSession=null;return {ok:true,id:'history-new'};}),
+  saveWorkout:input=>commit('saveWorkout',[input],([row])=>{const index=model.workouts.findIndex(w=>w.id===row.id);if(index<0)model.workouts.push(row);else model.workouts[index]=row;if(model.activeSession?.id===row.id)model.activeSession.done=model.activeSession.done.filter(id=>row.exercises.some(e=>e.id===id));return {id:row.id};}),
+  deleteWorkout:id=>commit('deleteWorkout',[id],([target])=>{model.workouts=model.workouts.filter(w=>w.id!==target);if(model.activeSession?.id===target)model.activeSession=null;return {ok:true};}),
   deleteSession:id=>commit('deleteSession',[id],([target])=>{model.sessions=model.sessions.filter(row=>row.id!==target);return {ok:true};}),
   inspectLegacy:async()=>({hasData:false})
  };
@@ -50,6 +52,7 @@ async function harness(t,{activeSession=null,confirm=true}={}){
   createLocalBiometric:()=>({}),createLocalAuthUI:()=>({render(){},settingsMarkup:()=>'',bindSettings(){},reset:async()=>{},initialize:async()=>{}}),
   createMusicPlayer:()=>({close(){playerCalls.push({name:'close'});},load:async value=>{playerCalls.push({name:'load',value:clone(value)});},openAccount:(provider,profile)=>{playerCalls.push({name:'openAccount',provider,profile:clone(profile)});},setMessage:message=>{playerCalls.push({name:'setMessage',message});}}),createYouTubeAccount:()=>({}),createSpotifyAccount:()=>({}),parseMusicLink,renderChart:()=>'',filterRange:points=>points,summarize:()=>({count:0,last:null}),
   setInterval:(fn,ms)=>{const id=++nextTimer;timers.set(id,{fn,ms});return id;},clearInterval:id=>timers.delete(id),setTimeout:(fn,ms)=>{const id=++nextTimer;timers.set(id,{fn,ms});return id;},clearTimeout:id=>timers.delete(id),
+  __showEditor:value=>{editorEvents.push({workout:clone(value),active:clone(vmContext.__appTest.getState().active),saved:clone(model.activeSession)});element('#editor').open=true;},
   __render:()=>{renderCount++;},__notify:message=>notices.push(String(message)),__ask:(...args)=>{confirmations.push(args);return Promise.resolve(typeof confirm==='function'?confirm(...args):confirm);}};
  context.window={addEventListener(){},dispatchEvent(){},scrollTo(){}};
  let source=await readFile(APP_URL,'utf8');
@@ -63,10 +66,10 @@ async function harness(t,{activeSession=null,confirm=true}={}){
   }
  }
  source=source.replace(/^import\s+[^;]+;\s*$/gm,'').replaceAll('import.meta.url',JSON.stringify(APP_URL.href)).replace(/\ninit\(\);?\s*$/,'\n');
- source+='\nrender=globalThis.__render;notify=globalThis.__notify;ask=globalThis.__ask;globalThis.__appTest={handle,detailView,historyView,activateMusic,lockApp,setAccounts(spotify,youtube){spotifyAccount=spotify;youtubeAccount=youtube;},setState(value){if("active"in value)active=structuredClone(value.active);if(value.data)data=structuredClone(value.data);if("selectedId"in value)selectedId=value.selectedId;if(value.page)page=value.page;},getState(){return structuredClone({active,data,selectedId,page,handling,restUntil,spotifyPlaylists,youtubePlaylists,youtubeTracks});},updateSessionTimer};';
+ source+='\nrender=globalThis.__render;notify=globalThis.__notify;ask=globalThis.__ask;if(typeof showWorkoutEditor==="function")showWorkoutEditor=globalThis.__showEditor;globalThis.__appTest={handle,card,detailView,historyView,openEditor,saveEditor,setDraft(value){readDraft=()=>structuredClone(value);},activateMusic,lockApp,setAccounts(spotify,youtube){spotifyAccount=spotify;youtubeAccount=youtube;},setState(value){if("active"in value)active=structuredClone(value.active);if(value.data)data=structuredClone(value.data);if("selectedId"in value)selectedId=value.selectedId;if(value.page)page=value.page;},getState(){return structuredClone({active,data,selectedId,page,handling,restUntil,spotifyPlaylists,youtubePlaylists,youtubeTracks});},updateSessionTimer};';
  const vmContext=vm.createContext(context);vm.runInContext(source,vmContext,{filename:'production-app.js'});
  const app=vmContext.__appTest;app.setState({active:activeSession,data:model,selectedId:activeSession?.id??workout.id,page:'fichas'});
- return {app,store,calls,notices,confirmations,playerCalls,loadingCalls,elements,accountState:()=>clone(authState),model:()=>clone(model),renders:()=>renderCount,now:()=>now,advance:ms=>{now+=ms;},
+ return {app,store,calls,notices,confirmations,playerCalls,loadingCalls,editorEvents,elements,accountState:()=>clone(authState),model:()=>clone(model),renders:()=>renderCount,now:()=>now,advance:ms=>{now+=ms;},
   deferNext(name){let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});const queue=deferred.get(name)||[];queue.push({promise});deferred.set(name,queue);return {resolve,reject};},
   sync(){app.setState({data:model});},element};
 }
@@ -203,4 +206,73 @@ test('locking the local profile during library loading cannot autoplay or expose
  await env.app.lockApp();assert.equal(env.accountState().unlocked,false);
  pending.resolve([{id:'37i9dQZF1DXcBWIGoYBM5M',name:'Lista do perfil anterior',url:'https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M'}]);await activating;
  assert.equal(env.app.getState().page,'inicio');assert.deepEqual(env.app.getState().spotifyPlaylists,[]);assert.equal(env.playerCalls.some(c=>c.name==='load'),false);assert.equal(env.playerCalls.some(c=>c.name==='setMessage'),false);assert.deepEqual(env.app.getState().data.musicLinks,[]);
+});
+
+function visibleActionLabel(html,action){
+ const match=html.match(new RegExp(`<button\\b(?=[^>]*data-action="${action}")[^>]*>([\\s\\S]*?)<\\/button>`));
+ return match?match[1].replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim():null;
+}
+
+for(const [label,session] of [['idle',null],['running',activeAt(1_800_000_000_000)],['paused',activeAt(1_800_000_000_000,{pausedAt:1_800_000_030_000})]])test(`workout card and details show visible edit/delete labels while ${label}`,async t=>{
+ const env=await harness(t,{activeSession:session});
+ for(const html of [env.app.card(workout,0),env.app.detailView()]){
+  assert.match(visibleActionLabel(html,'edit')||'',/Editar/);assert.match(visibleActionLabel(html,'delete')||'',/Excluir/);
+ }
+});
+
+test('editing the running workout persists its pause before opening the editor and preserves completed exercises',async t=>{
+ const active=activeAt(1_800_000_000_000,{done:['exercise-a']}),env=await harness(t,{activeSession:active}),pending=env.deferNext('setSetting');
+ const action=env.app.handle('edit',{id:workout.id});await flush();
+ assert.equal(env.editorEvents.length,0,'The editor must not appear before the durable pause');assert.deepEqual(env.app.getState().active,active);
+ pending.resolve();await action;assert.equal(env.editorEvents.length,1);
+ const event=env.editorEvents[0];assert.equal(event.workout.id,workout.id);assert.equal(event.active.pausedAt,env.now());assert.deepEqual(event.active.done,['exercise-a']);assert.deepEqual(event.active,event.saved);
+});
+
+test('editing an already-paused workout preserves its timing/checklist without another pause write',async t=>{
+ const active=activeAt(1_800_000_000_000,{done:['exercise-a'],pausedAt:1_800_000_030_000,pausedMs:9000}),env=await harness(t,{activeSession:active});
+ await env.app.handle('edit',{id:workout.id});assert.equal(env.editorEvents.length,1);assert.deepEqual(env.app.getState().active,active);assert.deepEqual(env.model().activeSession,active);assert.equal(env.calls.some(c=>c.name==='setSetting'),false);
+});
+
+test('editing another workout or creating a new one does not pause or alter the current workout',async t=>{
+ const active=activeAt(1_800_000_000_000,{done:['exercise-a']}),env=await harness(t,{activeSession:active});
+ await env.app.handle('edit',{id:anotherWorkout.id});assert.equal(env.editorEvents[0].workout.id,anotherWorkout.id);assert.deepEqual(env.app.getState().active,active);
+ await env.app.handle('create');assert.equal(env.editorEvents.length,2);assert.deepEqual(env.model().activeSession,active);assert.deepEqual(env.app.getState().active,active);assert.equal(env.calls.some(c=>c.name==='setSetting'),false);
+});
+
+test('a failed automatic pause keeps the editor closed and the original active session intact',async t=>{
+ const active=activeAt(1_800_000_000_000,{done:['exercise-a']}),env=await harness(t,{activeSession:active}),pending=env.deferNext('setSetting');
+ const action=env.app.handle('edit',{id:workout.id});await flush();pending.reject(new Error('Não foi possível pausar'));await assert.doesNotReject(()=>action);
+ assert.equal(env.editorEvents.length,0);assert.deepEqual(env.app.getState().active,active);assert.deepEqual(env.model().activeSession,active);assert.ok(env.notices.includes('Não foi possível pausar'));assert.equal(env.app.getState().handling,false);
+});
+
+test('declining deletion leaves the current workout and its active session untouched',async t=>{
+ const active=activeAt(1_800_000_000_000,{done:['exercise-a']}),env=await harness(t,{activeSession:active,confirm:false}),before=env.model();
+ await env.app.handle('delete',{id:workout.id});assert.equal(env.confirmations.length,1);assert.deepEqual(env.model(),before);assert.deepEqual(env.app.getState().active,active);assert.equal(env.calls.some(c=>c.name==='deleteWorkout'),false);
+});
+
+test('deleting the active workout clears RAM only after the database deletion commits',async t=>{
+ const active=activeAt(1_800_000_000_000,{done:['exercise-a']}),env=await harness(t,{activeSession:active}),pending=env.deferNext('deleteWorkout');const history=env.model().sessions;
+ const action=env.app.handle('delete',{id:workout.id});await flush();assert.deepEqual(env.app.getState().active,active);assert.deepEqual(env.model().activeSession,active);
+ pending.resolve();await action;assert.equal(env.app.getState().active,null);assert.equal(env.model().activeSession,null);assert.deepEqual(env.app.getState().data.workouts.map(w=>w.id),[anotherWorkout.id]);assert.deepEqual(env.model().sessions,history);
+});
+
+test('a failed workout deletion preserves the workout, checklist and active time in RAM',async t=>{
+ const active=activeAt(1_800_000_000_000,{done:['exercise-a']}),env=await harness(t,{activeSession:active}),pending=env.deferNext('deleteWorkout'),before=env.model();
+ const action=env.app.handle('delete',{id:workout.id});await flush();pending.reject(new Error('Falha ao excluir ficha'));await action;
+ assert.deepEqual(env.app.getState().active,active);assert.deepEqual(env.model(),before);assert.ok(env.notices.includes('Falha ao excluir ficha'));
+});
+
+test('saving an edited active workout reloads the database-reconciled checklist',async t=>{
+ const active=activeAt(1_800_000_000_000,{done:['exercise-a'],pausedAt:1_800_000_030_000}),env=await harness(t,{activeSession:active});
+ await env.app.handle('edit',{id:workout.id});
+ env.app.setDraft({...clone(workout),exercises:[{...clone(workout.exercises[0]),id:'exercise-new',name:'Supino inclinado'}]});
+ await env.app.saveEditor({preventDefault(){}});
+ assert.equal(env.calls.some(c=>c.name==='saveWorkout'),true);assert.equal(env.calls.some(c=>c.name==='load'),true);
+ assert.deepEqual(env.app.getState().active.done,[]);assert.deepEqual(env.app.getState().active,env.model().activeSession);assert.equal(env.app.getState().active.pausedAt,active.pausedAt);assert.equal(env.app.getState().active.startedAt,active.startedAt);
+});
+
+test('missing workout identifiers cannot open an accidental new editor or trigger writes',async t=>{
+ const env=await harness(t),before=env.model();
+ for(const action of ['edit','delete'])for(const id of [undefined,'not-found'])await assert.doesNotReject(()=>env.app.handle(action,{id}));
+ assert.equal(env.editorEvents.length,0);assert.deepEqual(env.model(),before);assert.equal(env.calls.some(c=>c.name==='deleteWorkout'||c.name==='setSetting'||c.name==='saveWorkout'),false);
 });

@@ -2,7 +2,7 @@
 
 **[Abrir o site](https://perabru.github.io/peragym/) · [Abrir o aplicativo](https://perabru.github.io/peragym/docs/app/)**
 
-PWA gratuito para Android e iPhone. Fichas de treino, cargas em quilos, peso corporal, gráficos e histórico no banco local do aparelho. Visual neon e fita cassete nos botões de salvar.
+PWA gratuito para Android e iPhone. Fichas de treino, cargas em quilos, peso corporal, gráficos e histórico no banco local do aparelho. Visual neon e fita cassete nos botões de salvar. Crie, edite ou exclua fichas e ajuste exercícios, séries, repetições e cargas. Excluir uma ficha mantém o histórico de treinos concluídos.
 
 A abertura mostra uma tela de carregamento e libera o uso sem cadastro. Criar um perfil local com senha é opcional. Cada perfil tem seus próprios treinos cifrados; em aparelhos compatíveis, a verificação do dispositivo permite desbloquear com biometria ou PIN.
 

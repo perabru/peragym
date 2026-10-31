@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import {webcrypto} from 'node:crypto';
 import * as db from './db.js';
-import {localAccount} from './local-account.js?v=3.5.0';
+import {createLocalAccount, localAccount} from './local-account.js?v=3.6.0';
 const require=createRequire(import.meta.url);
 // Run with fake-indexeddb installed in the project, or provide its absolute entry point.
 const fake=require(process.env.PERAGYM_FAKE_IDB||'fake-indexeddb');
@@ -281,4 +281,85 @@ test('completed session deletion is isolated by profile even for identical impor
  await assert.rejects(()=>db.deleteSession(own.id),/não foi encontrado/);
  assert.deepEqual(await db.load(),original);assert.equal(localAccount.getState().revision,revision);
  await localAccount.login('db-history-other',password);assert.deepEqual(await db.load(),other);
+});
+
+const pausedProgress = (workout, done=[]) => {
+ const now=Date.now();return {id:workout.id,startedAt:now-20000,done,pausedAt:now-3000,pausedMs:2000};
+};
+test('editing the active fiche keeps pause timing and only completed IDs that still exist',async()=>{
+ await localAccount.register({name:'Edição de fichas',username:'db-workout-edit',password});
+ const source=input();source.exercises.push({...source.exercises[0],name:'Crucifixo'},{...source.exercises[0],name:'Tríceps'});
+ const {id}=await db.saveWorkout(source),{id:otherId}=await db.saveWorkout({...input(),name:'Outra ficha'});
+ let before=await db.load(),workout=before.workouts.find(w=>w.id===id),[removed,kept]=workout.exercises;
+ await db.finishWorkout({workoutId:id,duration:240});await db.saveBodyWeight({value:73.25,at:Date.now()-1000});
+ const progress=pausedProgress(workout,[removed.id,kept.id]);await db.setSetting('activeSession',progress);before=await db.load();
+ const edited=structuredClone(workout);edited.name='Ficha atualizada';edited.exercises=edited.exercises.slice(1);edited.exercises[0].weight=25;
+ edited.exercises.push({name:'Novo exercício',sets:2,reps:'12',weight:8,rest:30});
+ await db.saveWorkout(edited);const after=await db.load();
+ assert.deepEqual(after.activeSession,{...progress,done:[kept.id]});
+ assert.deepEqual(after.sessions,before.sessions);assert.deepEqual(after.bodyWeights,before.bodyWeights);
+ assert.deepEqual(after.workouts.find(w=>w.id===otherId),before.workouts.find(w=>w.id===otherId));
+ assert.equal(after.workouts.find(w=>w.id===id).createdAt,workout.createdAt);
+ assert.deepEqual(after.loadHistory.slice(0,before.loadHistory.length),before.loadHistory);
+ assert.equal(after.loadHistory.length,before.loadHistory.length+2,'changed load and new exercise receive history; preserved exercises do not duplicate it');
+ const other=structuredClone(after.workouts.find(w=>w.id===otherId));other.name='Outra ficha editada';
+ await db.saveWorkout(other);assert.deepEqual((await db.load()).activeSession,after.activeSession);
+});
+
+test('deleting the paused active fiche atomically clears it while retaining completed history, loads and body weights',async()=>{
+ const before=await db.load(),id=before.activeSession.id;
+ assert.deepEqual(await db.deleteWorkout(id),{ok:true});const after=await db.load();
+ assert.deepEqual(after,{...before,workouts:before.workouts.filter(workout=>workout.id!==id),
+  sessions:before.sessions.map(session=>session.workoutId===id?{...session,workoutId:null}:session),activeSession:null});
+ assert.equal(after.sessions.length,before.sessions.length);assert.equal(after.sessions[0].workoutId,null);
+ assert.deepEqual(after.loadHistory,before.loadHistory);assert.deepEqual(after.bodyWeights,before.bodyWeights);
+ const backup=await db.exportBackup();assert.equal(backup.version,1);assert.deepEqual(backup.data.workouts,after.workouts);
+ assert.deepEqual(backup.data.sessions,after.sessions);assert.deepEqual(backup.data.loadHistory,before.loadHistory);
+});
+
+test('invalid, missing or locked fiche deletion rejects without persisting a vault revision',async()=>{
+ const before=await db.load(),revision=localAccount.getState().revision;
+ for(const id of [null,undefined,0,42,{},[],true,'',' ','bad/id','x'.repeat(81)]){
+  await assert.rejects(()=>db.deleteWorkout(id),/inválido/);assert.equal(localAccount.getState().revision,revision);
+ }
+ await assert.rejects(()=>db.deleteWorkout('missing-workout-id'),/não foi encontrada/);
+ assert.equal(localAccount.getState().revision,revision);assert.deepEqual(await db.load(),before);
+ localAccount.lock();await assert.rejects(()=>db.deleteWorkout(before.workouts[0].id),error=>error.name==='LocalAccountLocked');
+ await localAccount.login('db-workout-edit',password);assert.equal(localAccount.getState().revision,revision);assert.deepEqual(await db.load(),before);
+});
+
+test('fiche deletion is isolated between guest and password profiles and leaves another active fiche untouched',async()=>{
+ await localAccount.enterGuest();const {id}=await db.saveWorkout({...input(),name:'Ficha visitante A'});
+ const {id:otherId}=await db.saveWorkout({...input(),name:'Ficha visitante B'});
+ await db.finishWorkout({workoutId:id,duration:90});await db.finishWorkout({workoutId:otherId,duration:150});
+ await db.saveBodyWeight({value:74,at:Date.now()-1000});
+ let guest=await db.load();const progress=pausedProgress(guest.workouts.find(w=>w.id===otherId));await db.setSetting('activeSession',progress);
+ guest=await db.load();const backup=await db.exportBackup();
+ await localAccount.register({name:'Fichas protegidas',username:'db-workout-protected',password});await db.importBackup(backup);await db.setSetting('activeSession',progress);
+ const protectedBefore=await db.load();await db.deleteWorkout(id);const protectedAfter=await db.load();
+ assert.deepEqual(protectedAfter,{...protectedBefore,workouts:protectedBefore.workouts.filter(w=>w.id!==id),
+  sessions:protectedBefore.sessions.map(session=>session.workoutId===id?{...session,workoutId:null}:session)});
+ assert.deepEqual(protectedAfter.activeSession,progress);
+ await localAccount.enterGuest();assert.deepEqual(await db.load(),guest);await db.deleteWorkout(id);
+ const guestAfter=await db.load();assert.deepEqual(guestAfter.activeSession,progress);
+ assert.deepEqual(guestAfter.loadHistory,guest.loadHistory);assert.deepEqual(guestAfter.bodyWeights,guest.bodyWeights);
+ await localAccount.login('db-workout-protected',password);assert.deepEqual(await db.load(),protectedAfter);
+ await localAccount.enterGuest();assert.deepEqual(await db.load(),guestAfter);
+});
+
+test('CAS conflicts and encryption failures cannot partially delete a fiche or reconcile active progress',async()=>{
+ const current=await db.load(),id=current.activeSession.id;
+ await db.setSetting('activeSession',{...current.activeSession,done:[current.workouts.find(workout=>workout.id===id).exercises[0].id]});
+ const before=await db.load(),observer=createLocalAccount();await observer.enterGuest();
+ const changedTheme=before.theme==='dark'?'light':'dark';await observer.mutateData(data=>{data.theme=changedTheme;});
+ await assert.rejects(()=>db.deleteWorkout(id),error=>error.name==='LocalAccountConflict');
+ assert.deepEqual(await db.load(),{...before,theme:changedTheme});observer.lock();
+ const stable=await db.load(),revision=localAccount.getState().revision,subtle=crypto.subtle,descriptor=Object.getOwnPropertyDescriptor(subtle,'encrypt');
+ Object.defineProperty(subtle,'encrypt',{configurable:true,value:async()=>{throw new DOMException('Synthetic encryption failure','OperationError');}});
+ try{
+  await assert.rejects(()=>db.deleteWorkout(id));assert.equal(localAccount.getState().revision,revision);
+  const edit=structuredClone(stable.workouts.find(w=>w.id===id));edit.exercises=[{name:'Discarded exercise',sets:2,reps:'12',weight:5,rest:30}];
+  await assert.rejects(()=>db.saveWorkout(edit));assert.equal(localAccount.getState().revision,revision);
+ }finally{if(descriptor)Object.defineProperty(subtle,'encrypt',descriptor);else delete subtle.encrypt;}
+ assert.deepEqual(await db.load(),stable);
 });

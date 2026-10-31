@@ -1,6 +1,6 @@
 /* Personal records live only in the unlocked encrypted profile; legacy IndexedDB is read-only. */
-import {parseMusicLink} from './music-links.js?v=3.5.0';
-import {localAccount} from './local-account.js?v=3.5.0';
+import {parseMusicLink} from './music-links.js?v=3.6.0';
+import {localAccount} from './local-account.js?v=3.6.0';
 
 const LEGACY_DB_NAME = 'peragym-local';
 const LEGACY_STORES = ['workouts', 'sessions', 'settings', 'loadHistory', 'bodyWeights'];
@@ -106,13 +106,21 @@ export async function saveWorkout(input) {
     });
     const index = data.workouts.findIndex(w => w.id === workout.id);
     if (index < 0) data.workouts.push(workout); else data.workouts[index] = workout;
+    if (data.activeSession?.id === workout.id) {
+      const remaining = new Set(workout.exercises.map(exercise => exercise.id));
+      data.activeSession.done = Array.isArray(data.activeSession.done)
+        ? data.activeSession.done.filter(id => remaining.has(id)) : [];
+    }
     return {id:workout.id};
   });
 }
 export async function deleteWorkout(id) {
+  if (!validId(id)) invalid('O identificador da ficha é inválido.');
   return localAccount.mutateData(data => {
     requireSnapshot(data);
-    data.workouts = data.workouts.filter(w => w.id !== id);
+    const index = data.workouts.findIndex(workout => workout.id === id);
+    if (index < 0) invalid('A ficha não foi encontrada neste perfil.');
+    data.workouts.splice(index, 1);
     data.sessions.forEach(s => {if (s.workoutId === id) s.workoutId = null;});
     if (data.activeSession?.id === id) data.activeSession = null;
     return {ok:true}; // Historical completed sessions and loads survive fiche deletion.

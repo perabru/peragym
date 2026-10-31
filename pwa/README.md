@@ -4,7 +4,7 @@ HTML, CSS e JavaScript com IndexedDB local. A publicação atual é [GitHub Page
 
 ## Recursos
 
-- Criar, editar e excluir fichas; registrar séries, repetições, cargas e descanso.
+- Criar, editar e excluir fichas; alterar exercícios, séries, repetições, cargas e descanso. Excluir uma ficha mantém o histórico de treinos concluídos.
 - Histórico de treinos e gráficos de cargas e peso corporal.
 - Temas claro e escuro, instalação Android/iPhone e treinos offline.
 - Uso sem cadastro e perfil local com senha opcional, com bancos separados.

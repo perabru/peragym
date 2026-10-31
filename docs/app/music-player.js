@@ -1,5 +1,5 @@
-import {makeEmbedUrl,makeSpotifyEmbedUrl} from './music-links.js?v=3.5.0';
-import {createSpotifyPlayback} from './spotify-playback.js?v=3.5.0';
+import {makeEmbedUrl,makeSpotifyEmbedUrl} from './music-links.js?v=3.6.0';
+import {createSpotifyPlayback} from './spotify-playback.js?v=3.6.0';
 
 let youtubePromise;
 function youtubeApi(){

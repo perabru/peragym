@@ -1,14 +1,14 @@
-import {createOperationLoading} from './operation-loading.js?v=3.5.0';
-import {createSession,normalizeSession,elapsedSeconds,pauseSession,resumeSession,restartSession} from './workout-session.js?v=3.5.0';
-import * as store from './db.js?v=3.5.0';
-import {parseMusicLink} from './music-links.js?v=3.5.0';
-import {localAccount} from './local-account.js?v=3.5.0';
-import {createLocalBiometric} from './local-biometric.js?v=3.5.0';
-import {createLocalAuthUI} from './local-auth-ui.js?v=3.5.0';
-import {createYouTubeAccount} from './youtube-account.js?v=3.5.0';
-import {createSpotifyAccount} from './spotify-account.js?v=3.5.0';
-import {createMusicPlayer} from './music-player.js?v=3.5.0';
-import {renderChart,filterRange,summarize} from './charts.js?v=3.5.0';
+import {createOperationLoading} from './operation-loading.js?v=3.6.0';
+import {createSession,normalizeSession,elapsedSeconds,pauseSession,resumeSession,restartSession} from './workout-session.js?v=3.6.0';
+import * as store from './db.js?v=3.6.0';
+import {parseMusicLink} from './music-links.js?v=3.6.0';
+import {localAccount} from './local-account.js?v=3.6.0';
+import {createLocalBiometric} from './local-biometric.js?v=3.6.0';
+import {createLocalAuthUI} from './local-auth-ui.js?v=3.6.0';
+import {createYouTubeAccount} from './youtube-account.js?v=3.6.0';
+import {createSpotifyAccount} from './spotify-account.js?v=3.6.0';
+import {createMusicPlayer} from './music-player.js?v=3.6.0';
+import {renderChart,filterRange,summarize} from './charts.js?v=3.6.0';
 'use strict';
 const cassette = () => '<img src="/assets/cassette.svg" class="cassette-icon" alt="" aria-hidden="true">';
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -61,6 +61,8 @@ async function refresh() {
   data = await call('load');
   if(!Array.isArray(data.workouts)||!Array.isArray(data.sessions)) throw new Error('Não foi possível abrir suas fichas.');
   data.sessions.sort((a,b)=>b.completedAt-a.completedAt);
+  const saved=normalizeSession(data.activeSession);
+  active=saved&&workout(saved.id)?{...saved,done:saved.done.filter(id=>workout(saved.id).exercises.some(e=>e.id===id))}:null;
 }
 function notify(message) {
   // Dialogs are in the browser top layer; keep validation messages in that layer.
@@ -113,13 +115,17 @@ function weekView(){
   }).join('')}</div>`;
 }
 function emptyView(history=false){return `<div class="empty"><div class="empty-symbol">${icon(history?'history':'gym')}</div><h3>${history?'Nenhum treino concluído':'Nenhuma ficha criada'}</h3><p>${history?'Os treinos concluídos aparecerão aqui.':'Adicione os exercícios, séries e cargas.'}</p><button class="button primary" data-action="${history?'go-fichas':'create'}">${history?'Ver minhas fichas':'Criar ficha'} ${icon('arrow')}</button>${history?'':'<button class="text-button" data-action="template">Usar modelo em branco</button>'}</div>`;}
-function card(w,index){return `<article class="workout-card"><div class="workout-card-top"><div class="workout-letter">${String.fromCharCode(65+(index%26))}</div><div class="workout-info"><h3>${escapeHtml(w.name)}</h3><p class="workout-focus">${escapeHtml(w.focus||'Ficha de treino')}</p></div><button class="icon-button" data-action="edit" data-id="${w.id}" aria-label="Editar ${escapeHtml(w.name)}">${icon('edit')}</button></div><div class="card-meta"><span>${icon('gym')}${w.exercises.length} exercício${w.exercises.length!==1?'s':''}</span>${w.days?`<span>${icon('calendar')}${escapeHtml(w.days)}</span>`:''}</div><div class="card-bottom"><button class="text-button" data-action="open" data-id="${w.id}">Ver ficha ${icon('arrow')}</button><button class="button primary" data-action="start" data-id="${w.id}">${active&&active.id===w.id?(active.pausedAt!==null?'Retomar treino':'Continuar treino'):'Começar treino'}</button></div></article>`;}
+function workoutManagement(w,detail=false){
+  return `<div class="workout-manage ${detail?'detail-manage':''}" role="group" aria-label="Gerenciar ficha ${escapeHtml(w.name)}"><button type="button" class="button secondary" data-action="edit" data-id="${w.id}" aria-label="Editar ficha ${escapeHtml(w.name)}">${icon('edit')} Editar ficha</button><button type="button" class="button secondary workout-delete" data-action="delete" data-id="${w.id}" aria-label="Excluir ficha ${escapeHtml(w.name)}">${icon('trash')} Excluir ficha</button></div>`;
+}
+function card(w,index){return `<article class="workout-card"><div class="workout-card-top"><div class="workout-letter">${String.fromCharCode(65+(index%26))}</div><div class="workout-info"><h3>${escapeHtml(w.name)}</h3><p class="workout-focus">${escapeHtml(w.focus||'Ficha de treino')}</p></div></div><div class="card-meta"><span>${icon('gym')}${w.exercises.length} exercício${w.exercises.length!==1?'s':''}</span>${w.days?`<span>${icon('calendar')}${escapeHtml(w.days)}</span>`:''}</div>${workoutManagement(w)}<div class="card-bottom"><button class="text-button" data-action="open" data-id="${w.id}">Ver ficha ${icon('arrow')}</button><button class="button primary" data-action="start" data-id="${w.id}">${active&&active.id===w.id?(active.pausedAt!==null?'Retomar treino':'Continuar treino'):'Começar treino'}</button></div></article>`;}
+
 function homeView(){
   const date=new Date().toLocaleDateString('pt-BR',{weekday:'long',day:'numeric',month:'long'});
   return intro(date,'Treinos','',data.workouts.length?'<button class="button primary" data-action="create">+ Nova ficha</button>':'')+
     `<div class="home-simple">${statsView()}<section><div class="section-heading"><h2>Minhas fichas</h2>${data.workouts.length?'<button class="text-button" data-action="go-fichas">Ver todas</button>':''}</div><div class="workout-list">${data.workouts.length?data.workouts.slice(0,3).map(card).join(''):emptyView()}</div></section><div class="home-utilities"><section class="week-summary"><h3>Esta semana</h3>${weekView()}</section><button class="music-shortcut" data-action="go-music"><span aria-hidden="true">♫</span><div><strong>Música</strong><small>Abrir player</small></div>${icon('arrow')}</button></div></div>`;
 }
-function listView(){return intro('TREINOS','Minhas fichas','Exercícios, séries e cargas.','<button class="button primary add-top" data-action="create" aria-label="Criar nova ficha">+ Nova</button>')+(data.workouts.length?`<label class="search">${icon('search')}<input id="search" type="search" placeholder="Buscar ficha ou grupo muscular" aria-label="Buscar ficha ou grupo muscular"></label><div id="workout-results" class="workout-list all">${data.workouts.map(card).join('')}</div>`:emptyView());}
+function listView(){return intro('TREINOS','Minhas fichas','Edite os exercícios ou exclua a ficha.','<button class="button primary add-top" data-action="create" aria-label="Criar nova ficha">+ Nova</button>')+(data.workouts.length?`<label class="search">${icon('search')}<input id="search" type="search" placeholder="Buscar ficha ou grupo muscular" aria-label="Buscar ficha ou grupo muscular"></label><div id="workout-results" class="workout-list all">${data.workouts.map(card).join('')}</div>`:emptyView());}
 function ongoingView(){
   return `<aside class="ongoing-workout" aria-label="Treino em andamento"><div><span class="eyebrow">${active.pausedAt!==null?'TREINO PAUSADO':'EM ANDAMENTO'}</span><strong>${escapeHtml(workout(active.id)?.name||'Seu treino')} · <span id="session-time">${timeText(elapsedSeconds(active))}</span></strong></div><button class="button secondary" data-action="session-open">Abrir treino ${icon('arrow')}</button></aside>`;
 }
@@ -130,7 +136,7 @@ function sessionControls(){
 function detailView(){
   const w=workout(selectedId);if(!w){selectedId=null;return listView();}
   const running=active&&active.id===w.id;
-  return `<div class="detail-layout"><div class="page-title-row"><button class="icon-button" data-action="back" aria-label="Voltar">${icon('back')}</button><span class="eyebrow">SUA FICHA DE TREINO</span></div><section class="detail-hero"><span class="eyebrow">${escapeHtml(w.days||'FICHA DE TREINO')}</span><h1>${escapeHtml(w.name)}</h1><p class="subtext">${escapeHtml(w.focus||'Exercícios da ficha')}</p></section>${running?sessionControls():`<div class="detail-actions"><button class="button primary" data-action="start" data-id="${w.id}">Começar treino ${icon('arrow')}</button><button class="button secondary" data-action="edit" data-id="${w.id}" aria-label="Editar ficha">${icon('edit')}</button><button class="icon-button" data-action="delete" data-id="${w.id}" aria-label="Excluir ficha">${icon('trash')}</button></div>`}<div class="section-heading"><h3>${w.exercises.length} exercício${w.exercises.length===1?'':'s'}</h3><span class="small-label">Carga em kg</span></div>${w.exercises.map((e,i)=>`<article class="exercise-card"><div class="exercise-heading"><span class="exercise-index">${(i+1).toString().padStart(2,'0')}</span><h3>${escapeHtml(e.name)}</h3></div><div class="exercise-prescription"><span>${e.sets} séries</span><span>${escapeHtml(e.reps)} repetições</span><span>${e.rest}s de descanso</span></div><div class="weight-control"><span class="small-label">Carga atual</span><div class="weight-stepper"><button data-action="weight-minus" data-id="${e.id}" aria-label="Diminuir carga de ${escapeHtml(e.name)} em 1 kg" ${Number(e.weight)<=0?'disabled':''}>−</button><button class="weight-value" data-action="weight-edit" data-id="${e.id}" aria-label="Editar carga de ${escapeHtml(e.name)}">${formatKg(e.weight)} <small>kg</small></button><button data-action="weight-plus" data-id="${e.id}" aria-label="Aumentar carga de ${escapeHtml(e.name)} em 1 kg" ${Number(e.weight)>=2000?'disabled':''}>+</button></div></div>${e.notes?`<p class="exercise-note">${escapeHtml(e.notes)}</p>`:''}${running?`<button class="done-exercise ${active.done.includes(e.id)?'checked':''}" data-action="check-exercise" data-id="${e.id}" aria-pressed="${active.done.includes(e.id)}" ${active.pausedAt!==null?'disabled':''}>${icon('check')}${active.done.includes(e.id)?'Exercício concluído':'Marcar exercício como concluído'}</button>${e.rest?`<button class="rest-button" data-action="rest" data-seconds="${e.rest}" ${active.pausedAt!==null?'disabled':''}>${icon('clock')} Iniciar descanso de ${e.rest}s</button>`:''}`:''}</article>`).join('')}${w.notes?`<div class="note-box"><strong>Suas observações</strong><br>${escapeHtml(w.notes)}</div>`:''}<p class="footer-note">Toque na carga para editar. Cada ajuste é salvo no aparelho.</p></div>`;
+  return `<div class="detail-layout"><div class="page-title-row"><button class="icon-button" data-action="back" aria-label="Voltar">${icon('back')}</button><span class="eyebrow">SUA FICHA DE TREINO</span></div><section class="detail-hero"><span class="eyebrow">${escapeHtml(w.days||'FICHA DE TREINO')}</span><h1>${escapeHtml(w.name)}</h1><p class="subtext">${escapeHtml(w.focus||'Exercícios da ficha')}</p></section>${running?sessionControls():`<div class="detail-actions"><button class="button primary" data-action="start" data-id="${w.id}">Começar treino ${icon('arrow')}</button></div>`}${workoutManagement(w,true)}<div class="section-heading"><h3>${w.exercises.length} exercício${w.exercises.length===1?'':'s'}</h3><span class="small-label">Carga em kg</span></div>${w.exercises.map((e,i)=>`<article class="exercise-card"><div class="exercise-heading"><span class="exercise-index">${(i+1).toString().padStart(2,'0')}</span><h3>${escapeHtml(e.name)}</h3></div><div class="exercise-prescription"><span>${e.sets} séries</span><span>${escapeHtml(e.reps)} repetições</span><span>${e.rest}s de descanso</span></div><div class="weight-control"><span class="small-label">Carga atual</span><div class="weight-stepper"><button data-action="weight-minus" data-id="${e.id}" aria-label="Diminuir carga de ${escapeHtml(e.name)} em 1 kg" ${Number(e.weight)<=0?'disabled':''}>−</button><button class="weight-value" data-action="weight-edit" data-id="${e.id}" aria-label="Editar carga de ${escapeHtml(e.name)}">${formatKg(e.weight)} <small>kg</small></button><button data-action="weight-plus" data-id="${e.id}" aria-label="Aumentar carga de ${escapeHtml(e.name)} em 1 kg" ${Number(e.weight)>=2000?'disabled':''}>+</button></div></div>${e.notes?`<p class="exercise-note">${escapeHtml(e.notes)}</p>`:''}${running?`<button class="done-exercise ${active.done.includes(e.id)?'checked':''}" data-action="check-exercise" data-id="${e.id}" aria-pressed="${active.done.includes(e.id)}" ${active.pausedAt!==null?'disabled':''}>${icon('check')}${active.done.includes(e.id)?'Exercício concluído':'Marcar exercício como concluído'}</button>${e.rest?`<button class="rest-button" data-action="rest" data-seconds="${e.rest}" ${active.pausedAt!==null?'disabled':''}>${icon('clock')} Iniciar descanso de ${e.rest}s</button>`:''}`:''}</article>`).join('')}${w.notes?`<div class="note-box"><strong>Suas observações</strong><br>${escapeHtml(w.notes)}</div>`:''}<p class="footer-note">Toque na carga para editar. Cada ajuste é salvo no aparelho.</p></div>`;
 }
 function historyView(){return intro('TREINOS CONCLUÍDOS','Histórico','Datas e duração dos treinos.')+statsView()+(data.sessions.length?`<div class="section-heading"><h2>Treinos concluídos</h2><span class="small-label">Mais recentes</span></div>${data.sessions.map(s=>`<article class="history-item"><span class="history-tick">✓</span><div class="history-info"><h3>${escapeHtml(s.workoutName)}</h3><p>${new Date(s.completedAt).toLocaleDateString('pt-BR',{day:'2-digit',month:'long',year:'numeric'})} · ${new Date(s.completedAt).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}</p></div><div class="history-duration">${Math.floor(s.duration/60)} min<small>${s.duration%60} s</small></div><button class="text-button history-remove" data-action="history-delete" data-id="${s.id}" aria-label="Excluir treino ${escapeHtml(s.workoutName)} de ${new Date(s.completedAt).toLocaleDateString('pt-BR')}">${icon('trash')} Excluir</button></article>`).join('')}`:emptyView(true));}
 
@@ -332,15 +338,18 @@ async function handle(action,ds={}){
     if(action==='backup-export')return exportBackup();
     if(action==='backup-import')return $('#import-file').click();
     if(action==='settings')return nav('ajustes');
-    if(action==='create')return openEditor();
-    if(action==='template')return openEditor({name:'Treino A',focus:'',days:'',notes:'',exercises:[{name:'',sets:3,reps:'10',weight:0,rest:60,notes:''}]});
+    if(action==='create')return await openEditor();
+    if(action==='template')return await openEditor({name:'Treino A',focus:'',days:'',notes:'',exercises:[{name:'',sets:3,reps:'10',weight:0,rest:60,notes:''}]});
     if(action==='go-fichas')return nav('fichas');
     if(action==='open'){selectedId=ds.id;render();window.scrollTo(0,0);return;}
     if(action==='back'){selectedId=null;render();return;}
-    if(action==='edit')return openEditor(workout(ds.id));
+    if(action==='edit'){const w=workout(ds.id);if(!w){notify('Ficha não encontrada. Atualize a lista.');return;}return await openEditor(w);}
     if(action==='delete'){
-      const w=workout(ds.id);if(await ask('Excluir esta ficha?',`A ficha “${w.name}” e seus exercícios serão excluídos. O histórico de treinos concluídos será mantido.`,'Excluir ficha')){
-        await call('deleteWorkout',w.id);if(active&&active.id===w.id)clearActiveMemory();await refresh();selectedId=null;render();notify('Ficha excluída.');
+      const w=workout(ds.id);if(!w){notify('Ficha não encontrada. Atualize a lista.');return;}
+      const current=active?.id===w.id;
+      const message=`A ficha “${w.name}” será excluída.${current?' O treino em andamento desta ficha será cancelado.':''} O histórico de treinos concluídos e as cargas registradas serão mantidos.`;
+      if(await ask('Excluir esta ficha?',message,'Excluir ficha')){
+        await call('deleteWorkout',w.id);if(current)clearActiveMemory();await refresh();selectedId=null;page='fichas';render();notify('Ficha excluída.');
       }return;
     }
     if(action.startsWith('weight-')){
@@ -380,10 +389,15 @@ function ask(title,message,yes='Confirmar'){
     $('#confirm-yes').onclick=()=>close(true);$('#confirm-no').onclick=()=>close(false);dialog.oncancel=e=>{e.preventDefault();close(false);};dialog.showModal();
   });
 }
-function openEditor(w=null){
-  if(active){notify('Conclua o treino em andamento antes de editar suas fichas.');return;}
+async function openEditor(w=null){
+  if(w&&active?.id===w.id&&active.pausedAt===null){
+    await persistActive(pauseSession(active));resetRest();render();notify('Treino pausado para editar a ficha.');
+  }
+  showWorkoutEditor(w);
+}
+function showWorkoutEditor(w=null){
   $$('.dialog-message',$('#editor')).forEach(el=>el.remove());
-  editingId=w&&w.id||'';$('#editor-title').textContent=editingId?'Editar ficha de treino':'Nova ficha de treino';
+  editingId=w&&w.id||'';$('#editor-session-hint').hidden=!(editingId&&active?.id===editingId);$('#editor-title').textContent=editingId?'Editar ficha de treino':'Nova ficha de treino';
   const form=$('#workout-form');form.reset();['name','focus','days','notes'].forEach(k=>form.elements[k].value=w&&w[k]||'');
   $('#exercise-fields').innerHTML='';(w&&w.exercises.length?w.exercises:[{}]).forEach(addExerciseField);updateExerciseLabels();
   draftInitial=JSON.stringify(readDraft());$('#editor').showModal();$('.form-content').scrollTop=0;
