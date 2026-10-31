@@ -1,7 +1,7 @@
 'use strict';
 
 // The app is free. Only static assets are cached; personal records stay in IndexedDB.
-const VERSION = 'peragym-3.7.0';
+const VERSION = 'peragym-3.8.0';
 const PUBLIC_CACHE = `${VERSION}-public`;
 const APP_CACHE = `${VERSION}-app`;
 const CACHE_PREFIX = 'peragym-';
@@ -19,7 +19,7 @@ const PUBLIC_PATHS = new Set([
 const BASE_APP_PATHS = new Set([
   '/app/', '/app/index.html', '/app/style.css', '/app/app.js', '/app/db.js', '/app/charts.js'
 ]);
-const APP_PATHS = new Set([...BASE_APP_PATHS, '/app/music-links.js', '/app/music-player.js', '/app/boot.js', '/app/spotify-account.js', '/app/spotify-playback.js', '/app/local-account.js', '/app/local-auth-ui.js', '/app/local-biometric.js', '/app/youtube-account.js', '/app/workout-session.js', '/app/operation-loading.js', '/app/spotify-return.js']);
+const APP_PATHS = new Set([...BASE_APP_PATHS, '/app/music-links.js', '/app/music-connection-config.js', '/app/music-player.js', '/app/boot.js', '/app/spotify-account.js', '/app/spotify-playback.js', '/app/local-account.js', '/app/local-auth-ui.js', '/app/local-biometric.js', '/app/youtube-account.js', '/app/workout-session.js', '/app/operation-loading.js', '/app/spotify-return.js']);
 const OFFLINE_PATH = '/offline.html';
 let preparingOffline;
 

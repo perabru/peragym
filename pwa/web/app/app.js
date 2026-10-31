@@ -1,14 +1,15 @@
-import {createOperationLoading} from './operation-loading.js?v=3.7.0';
-import {createSession,normalizeSession,elapsedSeconds,pauseSession,resumeSession,restartSession} from './workout-session.js?v=3.7.0';
-import * as store from './db.js?v=3.7.0';
-import {parseMusicLink} from './music-links.js?v=3.7.0';
-import {localAccount} from './local-account.js?v=3.7.0';
-import {createLocalBiometric} from './local-biometric.js?v=3.7.0';
-import {createLocalAuthUI} from './local-auth-ui.js?v=3.7.0';
-import {createYouTubeAccount} from './youtube-account.js?v=3.7.0';
-import {createSpotifyAccount} from './spotify-account.js?v=3.7.0';
-import {createMusicPlayer} from './music-player.js?v=3.7.0';
-import {renderChart,filterRange,summarize} from './charts.js?v=3.7.0';
+import {createOperationLoading} from './operation-loading.js?v=3.8.0';
+import {createSession,normalizeSession,elapsedSeconds,pauseSession,resumeSession,restartSession} from './workout-session.js?v=3.8.0';
+import * as store from './db.js?v=3.8.0';
+import {parseMusicLink} from './music-links.js?v=3.8.0';
+import {localAccount} from './local-account.js?v=3.8.0';
+import {createLocalBiometric} from './local-biometric.js?v=3.8.0';
+import {createLocalAuthUI} from './local-auth-ui.js?v=3.8.0';
+import {createYouTubeAccount} from './youtube-account.js?v=3.8.0';
+import {createSpotifyAccount} from './spotify-account.js?v=3.8.0';
+import {createMusicPlayer} from './music-player.js?v=3.8.0';
+import {readMusicConnectionConfig,saveMusicConnectionConfig,clearMusicConnectionConfig} from './music-connection-config.js?v=3.8.0';
+import {renderChart,filterRange,summarize} from './charts.js?v=3.8.0';
 'use strict';
 const cassette = () => '<img src="/assets/cassette.svg" class="cassette-icon" alt="" aria-hidden="true">';
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -39,7 +40,8 @@ let page = 'inicio', selectedId = null, editingId = 0, active = null, restUntil 
 let timerHandle, toastHandle, restHandle, draftInitial = '';
 let chartExerciseId='', chartRange='90', submitting=false, handling=false;
 let spotifyAccount=null, youtubeAccount=null, musicConfigLoaded=false, spotifyPlaylists=[], youtubePlaylists=[], youtubeTracks=[], musicBusy=false, youtubeBusy=false, playlistRequest=0, youtubeRequest=0, musicGeneration=0;
-let legacyStatus=null, youtubePreparing=false;
+let legacyStatus=null, youtubePreparing=false, youtubePreparation=0;
+let spotifyTracks=[],selectedMusicPlaylist=null,musicTrackRequest=0,musicConnecting=false,musicPlaylistSearch='',musicTrackSearch='',musicTrackPage=0,musicPlaylistFailure=null;
 const localBiometric=createLocalBiometric({account:localAccount});
 const authUI=createLocalAuthUI({mount:$('#main'),account:localAccount,biometric:localBiometric,onUnlock:unlockApp,onLock:lockApp,onBusy:authBusy,onRefresh:async()=>{await refresh();render();}});
 let returningFromSpotify=new URLSearchParams(location.search).has('state') && (new URLSearchParams(location.search).has('code')||new URLSearchParams(location.search).has('error'));
@@ -171,96 +173,177 @@ function evolutionView(){
 function settingsView(){
   return intro('PERAGYM','Ajustes','Instalação e backup dos dados.')+
     `<div class="settings-grid">${authUI.settingsMarkup()}${legacyStatus?.hasData&&!data.legacyImport?'<section class="setting-card"><span class="eyebrow">DADOS ANTERIORES</span><h2>Trazer meus treinos</h2><p>Há registros da versão sem login neste navegador. Você pode copiá-los para este perfil vazio.</p><button class="button secondary" data-action="legacy-import">Copiar treinos anteriores</button><p class="form-hint">A cópia antiga continuará sem senha.</p></section>':''}<section class="setting-card"><span class="eyebrow">INSTALAÇÃO</span><h2>PeraGym na tela inicial</h2><p>Instale no Android ou no iPhone e abra o seu treino como um aplicativo.</p><button class="button primary" data-install data-install-help>Instalar aplicativo ${icon('arrow')}</button><p class="form-hint">No iPhone: abra no Safari, toque em Compartilhar e escolha Adicionar à Tela de Início.</p></section>
-    <section class="setting-card"><span class="eyebrow">ARMAZENAMENTO</span><h2>Backup local</h2><p>As fichas, cargas e registros de peso ficam no banco deste navegador. Exporte um backup para guardar ou transferir para outro aparelho.</p><div class="backup-actions"><button class="button primary" data-action="backup-export">Salvar backup ${cassette()}</button><button class="button secondary" data-action="backup-import">Importar backup</button></div><input id="import-file" type="file" accept="application/json,.json" hidden><p class="form-hint">Apagar os dados do navegador ou desinstalar pode remover o banco local. O arquivo de backup contém seus dados pessoais: guarde-o em um lugar privado.</p></section></div><p class="footer-note">PeraGym · Vice Training</p>`;
+    <section class="setting-card"><span class="eyebrow">MÚSICA</span><h2>Conexão das contas</h2><p>Google e Spotify: login oficial e playlists neste player.</p><button class="button secondary" data-action="music-config">Configurar conexão</button></section><section class="setting-card"><span class="eyebrow">ARMAZENAMENTO</span><h2>Backup local</h2><p>As fichas, cargas e registros de peso ficam no banco deste navegador. Exporte um backup para guardar ou transferir para outro aparelho.</p><div class="backup-actions"><button class="button primary" data-action="backup-export">Salvar backup ${cassette()}</button><button class="button secondary" data-action="backup-import">Importar backup</button></div><input id="import-file" type="file" accept="application/json,.json" hidden><p class="form-hint">Apagar os dados do navegador ou desinstalar pode remover o banco local. O arquivo de backup contém seus dados pessoais: guarde-o em um lugar privado.</p></section></div><p class="footer-note">PeraGym · Vice Training</p>`;
 }
 
 function musicView(){
   const links=(data.musicLinks||[]).map(url=>{try{return parseMusicLink(url);}catch(_){return null;}}).filter(Boolean);
   const spotify=spotifyAccount?.getState()||{configured:false,connected:false};
   const youtube=youtubeAccount?.getState()||{configured:false,connected:false,ready:false};
-  const spotifyConnect=spotify.connected?`<div class="account-connected"><i class="status-dot"></i><strong>${escapeHtml(spotify.profile?.displayName||'Conta Spotify')}</strong><button class="text-button" data-action="spotify-disconnect">Sair</button></div><button class="button secondary full" data-action="spotify-library" ${musicBusy?'disabled':''}>${musicBusy?'Carregando...':'Minhas playlists'}</button>`:spotify.configured?`<button class="button spotify-connect full" data-action="spotify-connect">Conectar Spotify</button><p class="form-hint">Login oficial. Reprodução completa exige Premium.</p>`:`<button class="button secondary full" disabled>Conectar Spotify</button><p class="form-hint">Conexão de contas aguardando ativação. Para ouvir agora, cole um link acima.</p>`;
-  const youtubeConnect=youtube.connected?`<div class="account-connected"><i class="status-dot"></i><strong>${escapeHtml(youtube.profile?.displayName||'Conta YouTube')}</strong><button class="text-button" data-action="youtube-disconnect">Sair</button></div><button class="button secondary full" data-action="youtube-library" ${youtubeBusy?'disabled':''}>${youtubeBusy?'Carregando...':'Minhas playlists'}</button>`:youtube.configured?`<button class="button secondary full" data-action="${youtube.ready?'youtube-connect':'youtube-prepare'}" ${!youtube.ready&&!youtube.error?'disabled':''}>${youtube.ready?'Conectar com Google':youtube.error?'Preparar login Google':'Preparando login...'}</button><p class="form-hint">Autorize a leitura das playlists do YouTube.</p>`:`<button class="button secondary full" disabled>Conectar com Google</button><p class="form-hint">Conexão Google aguardando ativação. Para ouvir agora, cole um link acima.</p>`;
-  return intro('','Música','Escolha a conta ou cole um link.')+
-    `<div class="music-simple"><section class="setting-card music-input-card"><form id="music-form"><label>Link da música ou playlist<input id="music-link" type="url" inputmode="url" required maxlength="2048" placeholder="YouTube Music ou Spotify" autocomplete="off" spellcheck="false"></label><button type="submit" class="button primary full">Abrir no player ▶</button></form><p class="form-hint">Música exige internet.</p></section>
-    <div class="music-accounts"><section class="account-card"><h2>Spotify</h2>${musicConfigLoaded?spotifyConnect:'<p class="form-hint">Carregando conexão...</p>'}${spotify.error&&spotify.configured?`<p class="form-hint" role="status">${escapeHtml(spotify.error)}</p>`:''}</section><section class="account-card"><h2>YouTube / Music</h2>${musicConfigLoaded?youtubeConnect:'<p class="form-hint">Carregando conexão...</p>'}${youtube.error&&youtube.configured?`<p class="form-hint" role="status">${escapeHtml(youtube.error)}</p>`:''}</section></div>
-    ${spotifyPlaylists.length?`<section class="setting-card"><h2>Playlists do Spotify</h2><ul class="music-link-list">${spotifyPlaylists.map((item,i)=>`<li><strong>${escapeHtml(item.name)}</strong><button class="button secondary" data-action="spotify-playlist" data-index="${i}">Ouvir ▶</button></li>`).join('')}</ul></section>`:''}
-    ${youtubePlaylists.length?`<section class="setting-card"><h2>Playlists do YouTube</h2><ul class="music-link-list">${youtubePlaylists.map((item,i)=>`<li><strong>${escapeHtml(item.name)}</strong><button class="button secondary" data-action="youtube-playlist" data-index="${i}" ${youtubeBusy?'disabled':''}>Ver músicas</button></li>`).join('')}</ul></section>`:''}
-    ${youtubeTracks.length?`<section class="setting-card"><h2>Músicas da playlist</h2><ul class="music-link-list">${youtubeTracks.map((item,i)=>`<li><strong>${escapeHtml(item.name||item.title)}</strong><button class="button secondary" data-action="youtube-track" data-index="${i}">Ouvir ▶</button></li>`).join('')}</ul></section>`:''}
-    <section class="music-recents"><h2>Recentes</h2>${links.length?`<ul class="music-link-list">${links.map((item,i)=>`<li><div><strong>${escapeHtml(item.label)}</strong></div><div class="music-link-actions"><button class="button secondary" data-action="music-play" data-index="${i}" aria-label="Carregar ${escapeHtml(item.label)}">▶ Ouvir</button><button class="icon-button" data-action="music-remove" data-index="${i}" aria-label="Remover ${escapeHtml(item.label)} dos recentes">${icon('trash')}</button></div></li>`).join('')}</ul>`:'<p class="form-hint">Seus últimos oito links.</p>'}</section><details class="music-privacy"><summary>Contas e reprodução</summary><p>O login abre no serviço oficial. O PeraGym não recebe sua senha Google ou Spotify. As autorizações ficam apenas nesta sessão. O YouTube retorna as playlists disponíveis na sua API, sem acesso completo à biblioteca do YouTube Music. Vídeos privados ou bloqueados podem não tocar no player. O player do YouTube permanece visível; a música pausa ao ocultar o app ou abrir um formulário.</p><p><a href="https://www.youtube.com/t/terms" target="_blank" rel="noopener">Termos YouTube</a> · <a href="https://policies.google.com/privacy" target="_blank" rel="noopener">Privacidade Google</a> · <a href="https://www.spotify.com/legal/end-user-agreement/" target="_blank" rel="noopener">Termos Spotify</a> · <a href="https://www.spotify.com/legal/privacy-policy/" target="_blank" rel="noopener">Privacidade Spotify</a></p></details></div>`;
+  function connection(provider,state){
+    const title=provider==='spotify'?'Spotify':'YouTube';
+    if(state.connected)return `<div class="account-connected"><i class="status-dot"></i><strong>${escapeHtml(state.profile?.displayName||title)}</strong><button class="text-button" data-action="${provider}-disconnect">Desconectar</button></div><button class="button secondary full" data-action="${provider}-library" ${provider==='spotify'&&musicBusy||provider==='youtube'&&youtubeBusy?'disabled':''}>Atualizar playlists</button>`;
+    if(!state.configured)return `<button class="button secondary full" data-action="music-config">Configurar conexão</button><p class="form-hint">Login por conta ainda não ativado. Você pode usar um link de playlist.</p>`;
+    const preparing=provider==='youtube'&&!state.ready&&!state.error;
+    return `<button class="button ${provider==='spotify'?'spotify-connect':'primary'} full" data-action="${provider==='youtube'&&!state.ready?'youtube-prepare':provider+'-connect'}" ${preparing||musicConnecting?'disabled':''}>${preparing?'Preparando conexão…':'Conectar '+title}</button><p class="form-hint">${provider==='spotify'?'Login oficial. Player completo com Spotify Premium.':'Escolha sua conta Google na janela oficial.'}</p>`;
+  }
+  return intro('','Música','Conecte a conta e escolha sua playlist.')+`<div class="music-simple"><div class="music-accounts"><section class="account-card"><h2>Spotify</h2>${musicConfigLoaded?connection('spotify',spotify):'<p class="form-hint">Carregando conexão…</p>'}${spotify.error&&spotify.configured?`<p class="form-hint" role="status">${escapeHtml(spotify.error)}</p>`:''}</section><section class="account-card"><h2>YouTube / Music</h2>${musicConfigLoaded?connection('youtube',youtube):'<p class="form-hint">Carregando conexão…</p>'}${youtube.error&&youtube.configured?`<p class="form-hint" role="status">${escapeHtml(youtube.error)}</p>`:''}</section></div>
+    ${(spotify.connected||youtube.connected)?`<section class="setting-card music-library"><div class="music-library-heading"><h2>Minhas playlists</h2><span>${spotifyPlaylists.length+youtubePlaylists.length}</span></div><label class="music-search-label">Buscar playlist<input id="music-playlist-search" type="search" value="${escapeHtml(musicPlaylistSearch)}" placeholder="Nome da playlist" autocomplete="off"></label><div id="music-library-results">${musicLibraryResults()}</div></section>`:''}
+    ${musicPlaylistFailure?`<section class="setting-card music-library-error" role="alert"><h2>${escapeHtml(musicPlaylistFailure.name||'Playlist')}</h2><p>${escapeHtml(musicPlaylistFailure.message)}</p><button class="button secondary" data-action="music-playlist-embed">Abrir player oficial</button><p class="form-hint">A reprodução e a disponibilidade continuam sob controle do serviço.</p></section>`:''}
+    ${selectedMusicPlaylist?`<section class="setting-card music-track-section"><button class="text-button" data-action="music-tracks-back">← Minhas playlists</button><h2>${escapeHtml(selectedMusicPlaylist.name||'Playlist')}</h2><p class="form-hint">${selectedMusicPlaylist.provider==='spotify'?'Spotify':'YouTube'} · ${selectedMusicTracks().length} itens carregados</p><button class="button primary full" data-action="music-queue-play" ${!selectedMusicTracks().some(playableMusicTrack)?'disabled':''}>Tocar playlist ▶</button><label class="music-search-label">Buscar nesta playlist<input id="music-track-search" type="search" value="${escapeHtml(musicTrackSearch)}" placeholder="Música ou artista" autocomplete="off"></label><div id="music-track-results">${musicTrackResults()}</div></section>`:''}
+    <section class="setting-card music-input-card"><form id="music-form"><label>Ou cole um link de música ou playlist<input id="music-link" type="url" inputmode="url" required maxlength="2048" placeholder="YouTube Music ou Spotify" autocomplete="off" spellcheck="false"></label><button type="submit" class="button secondary full">Abrir playlist ou música ▶</button></form><p class="form-hint">Música exige internet. Playlists acessíveis à conta são carregadas por inteiro.</p></section>
+    <section class="music-recents"><h2>Recentes</h2>${links.length?`<ul class="music-link-list">${links.map((item,i)=>`<li><div><strong>${escapeHtml(item.label)}</strong></div><div class="music-link-actions"><button class="button secondary" data-action="music-play" data-index="${i}">▶ Ouvir</button><button class="icon-button" data-action="music-remove" data-index="${i}" aria-label="Remover ${escapeHtml(item.label)} dos recentes">${icon('trash')}</button></div></li>`).join('')}</ul>`:'<p class="form-hint">Seus últimos oito links.</p>'}</section><details class="music-privacy"><summary>Contas e reprodução</summary><p>O login acontece no Google ou Spotify. O PeraGym não pede a senha desses serviços. Autorizações e músicas carregadas ficam nesta sessão. O YouTube disponibiliza playlists pela API oficial, sem acesso a toda a biblioteca do YouTube Music. Itens privados, removidos ou bloqueados pelo serviço podem não tocar.</p><p>O player do YouTube permanece visível e pausa quando você oculta o app ou abre um formulário.</p><p><a href="https://www.youtube.com/t/terms" target="_blank" rel="noopener">Termos YouTube</a> · <a href="https://policies.google.com/privacy" target="_blank" rel="noopener">Privacidade Google</a> · <a href="https://www.spotify.com/legal/end-user-agreement/" target="_blank" rel="noopener">Termos Spotify</a> · <a href="https://www.spotify.com/legal/privacy-policy/" target="_blank" rel="noopener">Privacidade Spotify</a></p></details></div>`;
 }
-async function playMusic(raw){
+function musicLibraryResults(){
+  const query=musicPlaylistSearch.trim().toLocaleLowerCase('pt-BR');
+  const rows=[...spotifyPlaylists.map((item,index)=>({item,index,provider:'spotify'})),...youtubePlaylists.map((item,index)=>({item,index,provider:'youtube'}))].filter(({item})=>!query||item.name.toLocaleLowerCase('pt-BR').includes(query));
+  return rows.length?`<ul class="music-link-list">${rows.map(({item,index,provider})=>`<li><div><strong>${escapeHtml(item.name)}</strong><small>${provider==='spotify'?'Spotify':'YouTube'}${Number.isInteger(item.itemCount??item.count)?' · '+(item.itemCount??item.count)+' itens':''}</small></div><button class="button secondary" data-action="${provider}-playlist" data-index="${index}">Ver músicas</button></li>`).join('')}</ul>`:`<p class="form-hint">${query?'Nenhuma playlist com esse nome.':musicBusy||youtubeBusy?'Carregando suas playlists…':'Nenhuma playlist carregada. Toque em Atualizar playlists.'}</p>`;
+}
+function selectedMusicTracks(){return selectedMusicPlaylist?.provider==='spotify'?spotifyTracks:youtubeTracks;}
+function playableMusicTrack(item){return !!item&&!item.unavailable&&typeof item.url==='string'&&!!item.url&&((item.provider==='spotify'&&item.kind==='track')||(item.provider==='youtube'&&item.kind==='video'));}
+function musicTrackResults(){
+  const rows=selectedMusicTracks().map((item,index)=>({item,index})).filter(({item})=>!musicTrackSearch.trim()||[item.name,item.title,...(Array.isArray(item.artists)?item.artists:[])].join(' ').toLocaleLowerCase('pt-BR').includes(musicTrackSearch.trim().toLocaleLowerCase('pt-BR')));
+  const pages=Math.max(1,Math.ceil(rows.length/100));musicTrackPage=Math.max(0,Math.min(musicTrackPage,pages-1));
+  const start=musicTrackPage*100,visible=rows.slice(start,start+100);
+  return `${rows.length?`<ul class="music-link-list music-tracks">${visible.map(({item,index})=>`<li><div><strong><span class="music-track-number">${index+1}.</span> ${escapeHtml(item.name||item.title||'Item indisponível')}</strong>${item.artists?.length?`<small>${escapeHtml(item.artists.join(', '))}</small>`:''}${!playableMusicTrack(item)?'<small>Indisponível neste player</small>':''}</div><button class="button secondary" data-action="music-track" data-index="${index}" ${playableMusicTrack(item)?'':'disabled'} aria-label="Ouvir ${escapeHtml(item.name||item.title||'item')}">▶</button></li>`).join('')}</ul>`:'<p class="form-hint">Nenhuma música encontrada.</p>'}<div class="music-track-paging"><button class="button secondary" data-action="music-tracks-page" data-direction="previous" ${musicTrackPage===0?'disabled':''}>Anterior</button><span>${rows.length?`${start+1}–${Math.min(start+100,rows.length)} de ${rows.length}`:'0 músicas'}</span><button class="button secondary" data-action="music-tracks-page" data-direction="next" ${musicTrackPage>=pages-1?'disabled':''}>Próxima</button></div>`;
+}
+function bindMusicResults(root){$$('[data-action]',root).forEach(button=>button.addEventListener('click',()=>handle(button.dataset.action,button.dataset)));}
+function updateMusicTrackResults(){const root=$('#music-track-results');if(root){root.innerHTML=musicTrackResults();bindMusicResults(root);}}
+async function rememberMusic(url){
+  const session=localAccount.getState(),current=()=>hasLocalAccess()&&localAccount.getState().generation===session.generation;
+  const urls=[url,...(data.musicLinks||[]).filter(item=>item!==url)].slice(0,8);
+  try{await db.setSetting('musicLinks',urls);if(current())data.musicLinks=urls;}catch(_){if(current())notify('Não foi possível salvar o link nos recentes.');}
+}
+async function playMusic(raw,{direct=false}={}){
   const item=parseMusicLink(raw);
   if(!navigator.onLine)throw new Error('Conecte-se à internet para ouvir música.');
-  const urls=[item.url,...(data.musicLinks||[]).filter(url=>url!==item.url)].slice(0,8);
-  data.musicLinks=urls;
-  void musicPlayer.load(item).catch(error=>notify(error.message));
-  try{await db.setSetting('musicLinks',urls);}catch(_){notify('Não foi possível salvar o link nos recentes.');}
+  const account=item.provider==='spotify'?spotifyAccount:youtubeAccount;
+  if(!direct&&item.kind==='playlist'&&account?.getState().connected){await loadMusicPlaylist(item.provider,{...item,id:item.id||item.listId,name:item.label},{autoplay:true});return;}
+  void musicPlayer.load(item).catch(error=>notify(error.message));await rememberMusic(item.url);
   if(page==='musica')render();
 }
+async function playMusicQueue(index=null){
+  const list=selectedMusicPlaylist;if(!list)return;
+  const tracks=selectedMusicTracks(),items=tracks.filter(playableMusicTrack);
+  const target=index===null?items[0]:tracks[index],position=items.indexOf(target);
+  if(position<0)throw new Error('Escolha uma música disponível nesta playlist.');
+  const session=localAccount.getState();
+  await musicPlayer.loadQueue(items,{index:position,name:list.name,context:list.provider==='spotify'?{provider:'spotify',kind:'playlist',id:list.id,uri:`spotify:playlist:${list.id}`,url:list.url}:undefined});
+  if(!localAccount.getState().unlocked||session.generation!==localAccount.getState().generation)return;
+  await rememberMusic(list.url);
+}
 function musicAccountChanged(){
-  if(!spotifyAccount?.getState().connected){playlistRequest++;spotifyPlaylists=[];musicBusy=false;}
-  if(page==='musica' && localAccount.getState().unlocked)render();
+  if(!spotifyAccount?.getState().connected){playlistRequest++;spotifyPlaylists=[];spotifyTracks=[];musicBusy=false;if(selectedMusicPlaylist?.provider==='spotify'){musicTrackRequest++;selectedMusicPlaylist=null;}}
+  if(page==='musica'&&hasLocalAccess())render();
 }
 async function prepareYouTube(){
-  if(youtubePreparing||!youtubeAccount?.getState().configured||youtubeAccount.getState().ready)return;
-  youtubePreparing=true;try{await youtubeAccount.prepare();}catch(error){if(page==='musica'&&localAccount.getState().unlocked)notify(error.message);}finally{youtubePreparing=false;}
+  const account=youtubeAccount;
+  if(!account?.getState().configured||account.getState().ready||youtubePreparing===account)return;
+  const ticket=++youtubePreparation;youtubePreparing=account;
+  try{await account.prepare();}catch(error){if(ticket===youtubePreparation&&youtubeAccount===account&&page==='musica'&&hasLocalAccess())notify(error.message);}
+  finally{if(ticket===youtubePreparation){youtubePreparing=false;if(page==='musica'&&hasLocalAccess()&&youtubeAccount===account)render();}}
 }
 function youtubeAccountChanged(){
-  if(!youtubeAccount?.getState().connected){youtubeRequest++;youtubePlaylists=[];youtubeTracks=[];youtubeBusy=false;}
-  if(page==='musica'&&localAccount.getState().unlocked)render();
+  if(!youtubeAccount?.getState().connected){youtubeRequest++;youtubePlaylists=[];youtubeTracks=[];youtubeBusy=false;if(selectedMusicPlaylist?.provider==='youtube'){musicTrackRequest++;selectedMusicPlaylist=null;}}
+  if(page==='musica'&&hasLocalAccess())render();
 }
 async function initializeMusic(){
-  const generation=++musicGeneration;let clientId='',googleClientId='';
+  const generation=++musicGeneration,session=localAccount.getState();let clientId='',googleClientId='';
   try{
     const response=await fetch(new URL('../music-config.json',import.meta.url),{cache:'no-store',credentials:'omit',signal:AbortSignal.timeout(8000)});
-    if(response.ok){const config=await response.json();if(typeof config.spotifyClientId==='string' && /^[a-fA-F0-9]{32}$/.test(config.spotifyClientId))clientId=config.spotifyClientId;if(typeof config.googleClientId==='string')googleClientId=config.googleClientId;}
+    if(response.ok){const config=await response.json();if(typeof config.spotifyClientId==='string'&&/^[a-fA-F0-9]{32}$/.test(config.spotifyClientId))clientId=config.spotifyClientId;if(typeof config.googleClientId==='string'&&/^[A-Za-z0-9_-]{6,200}\.apps\.googleusercontent\.com$/.test(config.googleClientId))googleClientId=config.googleClientId;}
   }catch(_){ /* Local training remains available without music services. */ }
-  if(generation!==musicGeneration||!localAccount.getState().unlocked)return;
+  if(generation!==musicGeneration||!hasLocalAccess()||session.generation!==localAccount.getState().generation)return;
+  const saved=readMusicConnectionConfig(session.profile.id);clientId=saved.spotifyClientId||clientId;googleClientId=saved.googleClientId||googleClientId;
   spotifyAccount=createSpotifyAccount({clientId,redirectUri:new URL('./',import.meta.url).href,onChange:musicAccountChanged});
-  youtubeAccount=createYouTubeAccount({clientId:googleClientId,onChange:youtubeAccountChanged});
-  musicConfigLoaded=true;
+  youtubeAccount=createYouTubeAccount({clientId:googleClientId,onChange:youtubeAccountChanged});musicConfigLoaded=true;
   if(returningFromSpotify){
     let owner=null;try{owner=sessionStorage.getItem('peragym:spotify-profile');}catch(_){}
-    if(owner&&owner!==localAccount.getState().profile.id){notify('Entre no perfil que iniciou a conexão com o Spotify.');}
-    else{
-      page='musica';selectedId=null;render();
-      try{const result=await spotifyAccount.completeRedirect();if(generation!==musicGeneration)return;try{sessionStorage.removeItem('peragym:spotify-profile');}catch(_){}if(result.error)notify(result.error);else if(result.connected){notify('Spotify conectado.');void activateMusic('spotify');}returningFromSpotify=false;}catch(error){notify(error.message);}
-    }
+    if(owner&&owner!==session.profile.id)notify('Entre no perfil que iniciou a conexão com o Spotify.');
+    else{page='musica';selectedId=null;render();try{const result=await spotifyAccount.completeRedirect();if(generation!==musicGeneration)return;try{sessionStorage.removeItem('peragym:spotify-profile');}catch(_){}if(result.error)notify(result.error);else if(result.connected){notify('Spotify conectado.');void activateMusic('spotify');}returningFromSpotify=false;}catch(error){notify(error.message);}}
   }
-  if(page==='musica'&&localAccount.getState().unlocked){render();void prepareYouTube();}
+  if(page==='musica'&&hasLocalAccess()){render();void prepareYouTube();}
 }
 async function activateMusic(provider){
-  const account=provider==='spotify'?spotifyAccount:youtubeAccount;
-  const session=localAccount.getState();
-  if(!session.unlocked||!account?.getState().connected)return;
-  const current=()=>localAccount.getState().unlocked&&localAccount.getState().generation===session.generation&&(provider==='spotify'?spotifyAccount:youtubeAccount)===account&&account.getState().connected;
+  const account=provider==='spotify'?spotifyAccount:youtubeAccount,session=localAccount.getState();
+  if(!hasLocalAccess()||!account?.getState().connected)return;
   page='musica';selectedId=null;render();musicPlayer.openAccount(provider,account.getState().profile);window.scrollTo(0,0);
   if(provider==='spotify')await loadSpotifyPlaylists();else await loadYouTubePlaylists();
-  if(!current())return;
-  const recent=(data.musicLinks||[]).find(url=>{try{return parseMusicLink(url).provider===provider;}catch(_){return false;}});
-  if(recent){await playMusic(recent);return;}
-  const playlists=provider==='spotify'?spotifyPlaylists:youtubePlaylists;
-  if(playlists.length){
-    if(provider==='spotify'||playlists[0].privacyStatus!=='private'){await playMusic(playlists[0].url);return;}
-    await loadYouTubeTracks(0);if(!current())return;
-    const track=youtubeTracks.find(item=>item.privacyStatus!=='private');if(track){await playMusic(track.url);return;}
-  }
-  musicPlayer.setMessage('Conta conectada. Cole um link ou escolha uma música para ouvir.');
+  if(hasLocalAccess()&&session.generation===localAccount.getState().generation&&(provider==='spotify'?spotifyAccount:youtubeAccount)===account&&account.getState().connected)musicPlayer.setMessage('Escolha uma playlist para carregar todas as músicas.');
 }
+function musicLoadProgress(release,label,current){return progress=>{if(current())release.update?.(`${label}: ${progress.loaded}${Number.isSafeInteger(progress.total)?' de '+progress.total:''} itens · página ${progress.pages}`);};}
 async function loadSpotifyPlaylists(){
   if(musicBusy||!spotifyAccount?.getState().connected)return;
-  musicBusy=true;const request=++playlistRequest;render();
-  try{const rows=await operationLoading.run('Carregando playlists do Spotify…',()=>spotifyAccount.getPlaylists());if(request===playlistRequest){spotifyPlaylists=rows;if(!rows.length)notify('Nenhuma playlist disponível nesta conta.');}}catch(error){if(request===playlistRequest&&page==='musica')notify(error.message);}finally{if(request===playlistRequest){musicBusy=false;if(page==='musica')render();}}
+  const account=spotifyAccount,session=localAccount.getState(),request=++playlistRequest;musicBusy=true;render();
+  const current=()=>request===playlistRequest&&spotifyAccount===account&&localAccount.getState().unlocked&&localAccount.getState().generation===session.generation;
+  const release=operationLoading.start('Carregando playlists do Spotify…');
+  try{const rows=await account.getPlaylists({onProgress:musicLoadProgress(release,'Spotify',current)});if(current()){spotifyPlaylists=rows;if(!rows.length)notify('Nenhuma playlist disponível nesta conta.');}}catch(error){if(current())notify(error.message);}finally{release();if(current()){musicBusy=false;if(page==='musica')render();}}
 }
 async function loadYouTubePlaylists(){
   if(youtubeBusy||!youtubeAccount?.getState().connected)return;
-  youtubeBusy=true;const request=++youtubeRequest;render();
-  try{const rows=await operationLoading.run('Carregando playlists do YouTube…',()=>youtubeAccount.getPlaylists());if(request===youtubeRequest){youtubePlaylists=rows;youtubeTracks=[];if(!rows.length)notify('Nenhuma playlist disponível pela API do YouTube.');}}catch(error){if(request===youtubeRequest)notify(error.message);}finally{if(request===youtubeRequest){youtubeBusy=false;if(page==='musica')render();}}
+  const account=youtubeAccount,session=localAccount.getState(),request=++youtubeRequest;youtubeBusy=true;render();
+  const current=()=>request===youtubeRequest&&youtubeAccount===account&&localAccount.getState().unlocked&&localAccount.getState().generation===session.generation;
+  const release=operationLoading.start('Carregando playlists do YouTube…');
+  try{const rows=await account.getPlaylists({onProgress:musicLoadProgress(release,'YouTube',current)});if(current()){youtubePlaylists=rows;if(!rows.length)notify('Nenhuma playlist disponível pela API do YouTube.');}}catch(error){if(current())notify(error.message);}finally{release();if(current()){youtubeBusy=false;if(page==='musica')render();}}
 }
-async function loadYouTubeTracks(index){
-  const item=youtubePlaylists[index];if(!item||youtubeBusy)return;
-  youtubeBusy=true;const request=++youtubeRequest;render();
-  try{const rows=await operationLoading.run('Carregando músicas…',()=>youtubeAccount.getPlaylistTracks(item.id));if(request===youtubeRequest){youtubeTracks=rows;if(!rows.length)notify('Esta playlist não tem vídeos disponíveis para o player.');}}catch(error){if(request===youtubeRequest)notify(error.message);}finally{if(request===youtubeRequest){youtubeBusy=false;if(page==='musica')render();}}
+async function loadMusicPlaylist(provider,item,{autoplay=false}={}){
+  const account=provider==='spotify'?spotifyAccount:youtubeAccount;if(!item||!account?.getState().connected)return;
+  const request=++musicTrackRequest,session=localAccount.getState();
+  const current=()=>request===musicTrackRequest&&hasLocalAccess()&&localAccount.getState().generation===session.generation&&(provider==='spotify'?spotifyAccount:youtubeAccount)===account&&account.getState().connected;
+  musicPlaylistFailure=null;const release=operationLoading.start('Carregando a playlist inteira…');
+  try{
+    const rows=await account.getPlaylistTracks(item.id,{onProgress:musicLoadProgress(release,'Músicas carregadas',current)});if(!current())return;
+    selectedMusicPlaylist={...item,provider};if(provider==='spotify')spotifyTracks=rows;else youtubeTracks=rows;musicTrackSearch='';musicTrackPage=0;render();
+    if(!rows.length)notify('Esta playlist não tem itens disponíveis para a conta conectada.');
+  }catch(error){if(current()){musicPlaylistFailure={...item,provider,message:error.message};render();notify(error.message);}return;}finally{release();}
+  if(autoplay&&current()&&selectedMusicTracks().some(playableMusicTrack))await playMusicQueue();
+}
+async function loadYouTubeTracks(index){return loadMusicPlaylist('youtube',youtubePlaylists[index]);}
+async function loadSpotifyTracks(index){return loadMusicPlaylist('spotify',spotifyPlaylists[index]);}
+function openMusicConnectionSettings(){
+  const session=localAccount.getState(),profile=session.profile;if(!profile)return;
+  const config=readMusicConnectionConfig(profile.id),dialog=document.createElement('dialog');dialog.className='music-config-dialog';
+  dialog.setAttribute('aria-labelledby','music-config-title');
+  dialog.innerHTML=`<form class="confirm-content"><span class="eyebrow">CONFIGURAÇÃO DE CONEXÃO</span><h2 id="music-config-title">Ativar login das contas</h2><p class="form-hint">Informe os Client IDs públicos dos projetos Google e Spotify. A senha da sua conta será pedida somente pelo serviço oficial.</p><label>Spotify Client ID público<input name="spotifyClientId" autocomplete="off" spellcheck="false" autocapitalize="none" maxlength="32" value="${escapeHtml(config.spotifyClientId)}" placeholder="32 caracteres"></label><label>Google Client ID público<input name="googleClientId" autocomplete="off" spellcheck="false" autocapitalize="none" maxlength="240" value="${escapeHtml(config.googleClientId)}" placeholder="…apps.googleusercontent.com"></label><details><summary>Endereços para cadastrar nos projetos</summary><label>Retorno Spotify<input readonly value="${escapeHtml(new URL('./',import.meta.url).href)}"></label><label>Origem Google<input readonly value="${escapeHtml(location.origin)}"></label><p class="form-hint">Ative YouTube Data API v3 no projeto Google. Use apenas IDs públicos, nunca Client Secret. Os IDs ficam neste perfil do navegador.</p><p><a href="https://developer.spotify.com/dashboard" target="_blank" rel="noopener">Projeto Spotify ↗</a> · <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Projeto Google ↗</a></p></details><p class="auth-error" role="alert" hidden></p><div class="confirm-actions"><button type="button" class="button secondary" data-music-config-close>Cancelar</button><button type="submit" class="button primary">Salvar conexão ${cassette()}</button></div><button type="button" class="text-button" data-music-config-default>Usar configuração padrão do site</button></form>`;
+  document.body.append(dialog);let busy=false;const cleanup=()=>{dialog.close();dialog.remove();};
+  $('[data-music-config-close]',dialog).onclick=()=>{if(!busy)cleanup();};dialog.oncancel=event=>{event.preventDefault();if(!busy)cleanup();};
+  async function save(useDefault=false){
+    if(busy||!hasLocalAccess()||localAccount.getState().profile?.id!==profile.id)return;busy=true;
+    const button=$('[type=submit]',dialog);button.disabled=true;
+    try{
+      if(useDefault)clearMusicConnectionConfig(profile.id);else{const form=$('form',dialog);saveMusicConnectionConfig(profile.id,{spotifyClientId:form.elements.spotifyClientId.value,googleClientId:form.elements.googleClientId.value});}
+      musicGeneration++;playlistRequest++;youtubeRequest++;musicTrackRequest++;youtubePreparation++;youtubePreparing=false;youtubePreparation++;youtubePreparing=false;musicPlayer.close();spotifyAccount?.disconnect();youtubeAccount?.disconnect({revoke:false});spotifyAccount=null;youtubeAccount=null;spotifyPlaylists=[];youtubePlaylists=[];spotifyTracks=[];youtubeTracks=[];selectedMusicPlaylist=null;musicConfigLoaded=false;
+      await operationLoading.run('Preparando conexão…',initializeMusic);if(!hasLocalAccess()||session.generation!==localAccount.getState().generation)return;cleanup();if(page==='musica')render();notify('Configuração salva. Toque em Conectar para escolher sua conta.');
+    }catch(error){const message=$('.auth-error',dialog);message.hidden=false;message.textContent=error.message;}finally{busy=false;button.disabled=false;}
+  }
+  $('form',dialog).onsubmit=event=>{event.preventDefault();void save();};$('[data-music-config-default]',dialog).onclick=()=>void save(true);dialog.showModal();
+}
+async function handleMusicAction(action,ds){
+  if(action==='music-config')return openMusicConnectionSettings();
+  if(action==='music-playlist-embed'&&musicPlaylistFailure)return playMusic(musicPlaylistFailure.url,{direct:true});
+  if(action==='spotify-connect'||action==='youtube-connect'){
+    if(musicConnecting)return;const provider=action.startsWith('spotify')?'spotify':'youtube',account=provider==='spotify'?spotifyAccount:youtubeAccount;if(!account)return;
+    musicConnecting=true;const session=localAccount.getState();
+    try{
+      if(provider==='spotify')try{sessionStorage.setItem('peragym:spotify-profile',session.profile.id);}catch(_){}
+      const result=await operationLoading.run(`Conectando ao ${provider==='spotify'?'Spotify':'YouTube'}…`,()=>provider==='spotify'?account.connectPopup():account.connect());
+      if(!hasLocalAccess()||session.generation!==localAccount.getState().generation)return;
+      if(result?.connected){if(provider==='spotify')try{sessionStorage.removeItem('peragym:spotify-profile');}catch(_){}await activateMusic(provider);}else if(result?.error)notify(result.error);
+    }finally{musicConnecting=false;if(page==='musica'&&hasLocalAccess())render();}return;
+  }
+  if(action==='youtube-prepare')return prepareYouTube();
+  if(action==='spotify-library')return loadSpotifyPlaylists();if(action==='youtube-library')return loadYouTubePlaylists();
+  if(action==='spotify-playlist')return loadSpotifyTracks(Number(ds.index));if(action==='youtube-playlist')return loadYouTubeTracks(Number(ds.index));
+  if(action==='youtube-track'||action==='music-track')return playMusicQueue(Number(ds.index));
+  if(action==='music-queue-play')return playMusicQueue();
+  if(action==='music-tracks-page'){musicTrackPage+=ds.direction==='next'?1:-1;updateMusicTrackResults();return;}
+  if(action==='music-tracks-back'){musicTrackRequest++;selectedMusicPlaylist=null;musicTrackSearch='';musicTrackPage=0;render();return;}
+  if(action==='spotify-disconnect'||action==='youtube-disconnect'){
+    musicPlayer.close();const provider=action.startsWith('spotify')?'spotify':'youtube';if(provider==='spotify'){playlistRequest++;spotifyAccount?.disconnect();spotifyPlaylists=[];spotifyTracks=[];musicBusy=false;}else{youtubeRequest++;youtubeAccount?.disconnect();youtubePlaylists=[];youtubeTracks=[];youtubeBusy=false;}
+    if(selectedMusicPlaylist?.provider===provider){musicTrackRequest++;selectedMusicPlaylist=null;}if(musicPlaylistFailure?.provider===provider)musicPlaylistFailure=null;render();return;
+  }
+  if(action==='music-play')return playMusic(data.musicLinks[Number(ds.index)]);
+  if(action==='music-remove'){const urls=data.musicLinks.filter((_,i)=>i!==Number(ds.index));await db.setSetting('musicLinks',urls);data.musicLinks=urls;render();}
 }
 
 function localDateTime(at=Date.now()){
@@ -287,6 +370,8 @@ function bindPage(){
   authUI.bindSettings();
   if(page==='musica'&&youtubeAccount?.getState().configured&&!youtubeAccount.getState().ready&&!youtubeAccount.getState().error)void prepareYouTube();
   if($('#music-form'))$('#music-form').onsubmit=async event=>{event.preventDefault();try{await playMusic($('#music-link').value);}catch(error){notify(error.message);}};
+  if($('#music-playlist-search'))$('#music-playlist-search').oninput=event=>{musicPlaylistSearch=event.target.value;const root=$('#music-library-results');root.innerHTML=musicLibraryResults();bindMusicResults(root);};
+  if($('#music-track-search'))$('#music-track-search').oninput=event=>{musicTrackSearch=event.target.value;musicTrackPage=0;updateMusicTrackResults();};
   $$('[data-action]',$('#main')).forEach(b=>b.addEventListener('click',()=>handle(b.dataset.action,b.dataset)));
   if($('#chart-exercise'))$('#chart-exercise').onchange=e=>{chartExerciseId=e.target.value;render();};
   if($('#chart-range'))$('#chart-range').onchange=e=>{chartRange=e.target.value;render();};
@@ -300,7 +385,7 @@ function bindPage(){
 }
 async function handle(action,ds={}){
   if(!hasLocalAccess())return;
-  if(action==='spotify-library'){void loadSpotifyPlaylists();return;}
+  if(/^(?:spotify-|youtube-|music-)/.test(action)){try{return await handleMusicAction(action,ds);}catch(error){notify(error.message);return;}}
   if(handling)return;
   handling=true;
   try{
@@ -321,18 +406,6 @@ async function handle(action,ds={}){
       if(await ask('Cancelar este treino?','O treino em andamento será descartado. A ficha e as cargas serão mantidas.','Cancelar treino')){await clearActive();selectedId=null;page='inicio';render();window.scrollTo(0,0);notify('Treino cancelado.');}return;
     }
     if(action==='go-music')return nav('musica');
-    if(action==='spotify-connect'){try{sessionStorage.setItem('peragym:spotify-profile',localAccount.getState().profile.id);}catch(_){}const result=await operationLoading.run('Conectando ao Spotify…',()=>spotifyAccount.connectPopup());if(result?.connected){try{sessionStorage.removeItem('peragym:spotify-profile');}catch(_){}await activateMusic('spotify');}else if(result?.error)notify(result.error);return;}
-    if(action==='youtube-prepare')return await prepareYouTube();
-    if(action==='youtube-connect'){const result=await operationLoading.run('Conectando ao YouTube…',()=>youtubeAccount.connect());if(result.connected)await activateMusic('youtube');return;}
-    if(action==='youtube-library')return await loadYouTubePlaylists();
-    if(action==='youtube-playlist')return await loadYouTubeTracks(Number(ds.index));
-    if(action==='youtube-track')return await playMusic(youtubeTracks[Number(ds.index)].url);
-    if(action==='youtube-disconnect'){musicPlayer.close();youtubeAccount.disconnect();youtubePlaylists=[];youtubeTracks=[];render();return;}
-    if(action==='spotify-library')return await loadSpotifyPlaylists();
-    if(action==='spotify-playlist')return await playMusic(spotifyPlaylists[Number(ds.index)].url);
-    if(action==='spotify-disconnect'){musicPlayer.close();spotifyAccount.disconnect();spotifyPlaylists=[];render();return;}
-    if(action==='music-play')return await playMusic(data.musicLinks[Number(ds.index)]);
-    if(action==='music-remove'){const urls=data.musicLinks.filter((_,i)=>i!==Number(ds.index));await db.setSetting('musicLinks',urls);data.musicLinks=urls;render();return;}
     if(action==='body-add')return openBodyEditor();
     if(action==='body-edit')return openBodyEditor(data.bodyWeights.find(w=>w.id===ds.id));
     if(action==='body-delete'){if(await ask('Excluir este registro?','Este peso será removido do gráfico.','Excluir registro')){await db.deleteBodyWeight(ds.id);await refresh();render();notify('Registro removido.');}return;}
@@ -463,9 +536,9 @@ async function unlockApp(){
 }
 async function lockApp(){
   operationLoading.clear();authBusyRelease=null;
-  musicGeneration++;playlistRequest++;youtubeRequest++;
+  musicGeneration++;playlistRequest++;youtubeRequest++;musicTrackRequest++;youtubePreparation++;youtubePreparing=false;
   musicPlayer.close();spotifyAccount?.disconnect();youtubeAccount?.disconnect({revoke:false});
-  spotifyAccount=null;youtubeAccount=null;spotifyPlaylists=[];youtubePlaylists=[];youtubeTracks=[];musicBusy=false;youtubeBusy=false;musicConfigLoaded=false;
+  spotifyAccount=null;youtubeAccount=null;spotifyPlaylists=[];youtubePlaylists=[];spotifyTracks=[];youtubeTracks=[];selectedMusicPlaylist=null;musicPlaylistSearch='';musicTrackSearch='';musicTrackPage=0;musicPlaylistFailure=null;musicConnecting=false;musicBusy=false;youtubeBusy=false;musicConfigLoaded=false;
   localAccount.lock();
   $$('dialog').forEach(dialog=>{dialog.close();if(!['editor','confirm'].includes(dialog.id))dialog.remove();});
   $('#workout-form').reset();$('#exercise-fields').replaceChildren();$('#toast').textContent='';$('#toast').classList.remove('visible');

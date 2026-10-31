@@ -45,9 +45,9 @@ A biometria requer WebAuthn com extensão PRF, além da verificação do usuári
 
 Links são validados antes de carregar o player oficial. O YouTube mantém seu IFrame visível, pausa quando o aplicativo é ocultado ou um formulário cobre a tela e oferece abertura externa quando o conteúdo não permite incorporação.
 
-Spotify usa OAuth PKCE e Web Playback SDK, com tokens somente em memória e verificador temporário de uso único. Google usa Google Identity Services e o escopo `youtube.readonly`; o aplicativo lista playlists e vídeos expostos pela API de dados do YouTube. A API não representa toda a biblioteca do YouTube Music e não libera reprodução Premium nem vídeos que bloqueiam incorporação.
+Spotify usa OAuth PKCE e Web Playback SDK, com tokens somente em memória e verificador temporário de uso único. Google usa Google Identity Services e o escopo `youtube.readonly`. O aplicativo percorre as páginas de playlists e faixas retornadas pelas APIs, conforme as permissões da conta e do projeto. Não há API oficial para importar toda a biblioteca do YouTube Music, liberar recursos Premium ou reproduzir vídeos que bloqueiam incorporação.
 
-Os Client IDs públicos em `web/music-config.json` vêm vazios. Sem configuração, a interface informa que as conexões não estão ativadas e não exibe uma conta conectada. Não coloque Client Secrets nesse arquivo. A ativação e os limites estão em [Spotify](docs/spotify-setup.md) e [Google/YouTube](docs/youtube-setup.md).
+Os Client IDs públicos globais em `web/music-config.json` continuam vazios: a ativação padrão está pendente. **Ajustes** permite salvar os dois IDs por perfil, no `localStorage` sob `peragym.music.config.v1.<profileId>`. Essa configuração pública é independente do cofre e não altera senhas, chaves ou backups de treino. Só aceita os campos `spotifyClientId` e `googleClientId`; senhas, tokens e Client Secrets são rejeitados. O app mostra a origem e o callback que devem estar registrados nos painéis das aplicações. Salvar IDs não conecta uma conta: o usuário ainda autoriza no serviço oficial. A ativação e os limites estão em [Spotify](docs/spotify-setup.md) e [Google/YouTube](docs/youtube-setup.md).
 
 Referências: [IFrame](https://developers.google.com/youtube/iframe_api_reference) e [políticas](https://developers.google.com/youtube/terms/developer-policies).
 

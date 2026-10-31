@@ -141,10 +141,18 @@ test('playlist tracks use validated video identifiers and never fetch URLs suppl
  const count=env.calls.length;await assert.rejects(()=>env.account.getPlaylistTracks('https://evil.example/steal'),Error);assert.equal(env.calls.length,count);
 });
 
-test('library pagination is bounded at 100 rows rather than following an unbounded library',async t=>{
- const env=setup(t);await login(env);let pages=0;
- env.respond(()=>json({items:Array.from({length:50},(_,i)=>({id:`PL${String(pages*50+i).padStart(20,'0')}`,snippet:{title:'Playlist'}})),nextPageToken:`PAGE${++pages}`}));
- const rows=await env.account.getPlaylists();assert.equal(rows.length,100);assert.equal(pages,2);
+test('owned playlists follow every cursor beyond 100 rows and 10 pages while reporting actual progress',async t=>{
+ const env=setup(t);await login(env);let pages=0;const progress=[];
+ env.respond(call=>{
+  const page=pages++,url=new URL(call.url);assert.equal(url.searchParams.get('maxResults'),'50');
+  assert.equal(url.searchParams.get('pageToken'),page?`PAGE${page}`:null);
+  return json({items:Array.from({length:page===11?7:50},(_,i)=>({id:`PL${String(page*50+i).padStart(20,'0')}`,snippet:{title:`Playlist ${page*50+i}`}})),
+   pageInfo:{totalResults:557},...(page<11?{nextPageToken:`PAGE${page+1}`}:{})});
+ });
+ const rows=await env.account.getPlaylists({onProgress:value=>progress.push(value)});
+ assert.equal(rows.length,557);assert.equal(pages,12);assert.equal(progress.length,12);
+ assert.deepEqual(progress[0],{loaded:50,total:557,pages:1});assert.deepEqual(progress.at(-1),{loaded:557,total:557,pages:12});
+ assert.deepEqual(rows.map(row=>row.name),Array.from({length:557},(_,i)=>`Playlist ${i}`));
 });
 
 test('401 responses clear the local authorization without silently requesting another token',async t=>{
@@ -197,4 +205,80 @@ test('local lock ignores an outstanding Google popup callback without revoking c
  const rejected=assert.rejects(()=>pending,Error);await env.account.disconnect({revoke:false});await rejected;
  client.config.callback(TOKEN);await flush();
  assert.equal(env.account.getState().connected,false);assert.equal(env.calls.length,0);assert.equal(env.revokes.length,0);
+});
+
+test('all playlist pages retain ordered repeated videos and deduplicate only real item IDs repeated inside one page',async t=>{
+ const env=setup(t);await login(env);let pages=0;const progress=[];
+ env.respond(call=>{
+  const page=pages++,url=new URL(call.url);assert.equal(url.searchParams.get('part'),'snippet,contentDetails,status');
+  assert.equal(url.searchParams.get('pageToken'),page?`TRACKS${page}`:null);
+  const items=Array.from({length:11},(_,i)=>{
+   const position=page*11+i;
+   return {id:page===1&&i===0?'item-0':`item-${position}`,contentDetails:{videoId:VIDEO},snippet:{position,title:`Faixa ${position}`}};
+  });
+  items.splice(5,0,structuredClone(items[0]));
+  return json({items,pageInfo:{totalResults:132},...(page<11?{nextPageToken:`TRACKS${page+1}`}:{})});
+ });
+ const rows=await env.account.getPlaylistTracks(PLAYLIST,{onProgress:value=>progress.push(value)});
+ assert.equal(pages,12);assert.equal(rows.length,132);assert.ok(rows.every(row=>row.videoId===VIDEO&&row.id===VIDEO));
+ assert.deepEqual(rows.map(row=>row.position),Array.from({length:132},(_,i)=>i));
+ assert.deepEqual(rows.map(row=>row.name),Array.from({length:132},(_,i)=>`Faixa ${i}`));
+ assert.equal(rows[0].playlistItemId,'item-0');assert.equal(rows[11].playlistItemId,'item-0','the same item ID on a later page is preserved');
+ assert.deepEqual(progress.at(-1),{loaded:132,total:132,pages:12});assert.deepEqual(progress.map(row=>row.loaded),Array.from({length:12},(_,i)=>(i+1)*11));
+});
+
+test('missing playlist item IDs never collapse repeated videos and expose deterministic position fallbacks',async t=>{
+ const env=setup(t);await login(env);
+ env.respond(()=>json({items:[{contentDetails:{videoId:VIDEO},snippet:{title:'Primeira'}},{contentDetails:{videoId:VIDEO},snippet:{title:'Repetida'}},
+  {id:'not/an/item/id',contentDetails:{videoId:VIDEO},snippet:{title:'Terceira'}}]}));
+ const rows=await env.account.getPlaylistTracks(PLAYLIST);
+ assert.equal(rows.length,3);assert.deepEqual(rows.map(row=>row.position),[0,1,2]);assert.ok(rows.every(row=>row.playlistItemId===undefined));
+});
+
+test('corrupt and cyclic page tokens reject explicitly instead of returning a silently partial library',async t=>{
+ const env=setup(t);await login(env);
+ for(const token of [null,42,{},['TOKEN'],'bad token','https://evil.example/steal','x'.repeat(2049),'TOKEN\nNEXT']){
+  env.respond(()=>json({items:[{id:PLAYLIST}],nextPageToken:token}));
+  await assert.rejects(()=>env.account.getPlaylists(),/paginação inválida/);
+ }
+ for(const resource of ['playlists','playlistItems']){
+  let page=0;const progress=[];
+  env.respond(()=>json({items:[resource==='playlists'?{id:`PL${String(page).padStart(20,'0')}`}:{id:`item-${page}`,contentDetails:{videoId:VIDEO}}],nextPageToken:['A','B','A'][page++]}));
+  const loading=resource==='playlists'?env.account.getPlaylists({onProgress:value=>progress.push(value)}):env.account.getPlaylistTracks(PLAYLIST,{onProgress:value=>progress.push(value)});
+  await assert.rejects(()=>loading,/paginação inválida/);assert.equal(page,3);assert.equal(progress.length,2);
+ }
+});
+
+test('a response over the requested page size is rejected rather than truncated to fifty entries',async t=>{
+ const env=setup(t);await login(env);
+ env.respond(()=>json({items:Array.from({length:51},(_,i)=>({id:`PL${String(i).padStart(20,'0')}`}))}));
+ await assert.rejects(()=>env.account.getPlaylists(),/página maior/);
+});
+
+test('disconnect cancels a later playlist page and suppresses progress after a late network response',async t=>{
+ const env=setup(t);await login(env);let release;const waiting=new Promise(resolve=>{release=resolve;}),progress=[];
+ env.respond(call=>new URL(call.url).searchParams.has('pageToken')?waiting:json({items:[{id:'item-0',contentDetails:{videoId:VIDEO}}],nextPageToken:'NEXT'}));
+ const loading=env.account.getPlaylistTracks(PLAYLIST,{onProgress:value=>progress.push(value)}),rejected=assert.rejects(loading,error=>error.code==='YOUTUBE_CANCELLED');
+ await new Promise(resolve=>setImmediate(resolve));assert.equal(new URL(env.calls.at(-1).url).searchParams.get('pageToken'),'NEXT');
+ await env.account.disconnect({revoke:false});await rejected;assert.equal(env.calls.at(-1).init.signal.aborted,true);
+ const calls=env.calls.length;release(json({items:[{id:'item-1',contentDetails:{videoId:VIDEO}}],nextPageToken:'THIRD'}));await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(progress.length,1);assert.equal(env.calls.length,calls);assert.equal(env.account.getState().connected,false);
+});
+
+test('a progress callback can cancel traversal immediately and callback failures never break valid pagination',async t=>{
+ const env=setup(t);await login(env);let pages=0;
+ env.respond(()=>json({items:[{id:`PL${String(pages++).padStart(20,'0')}`}],nextPageToken:'NEXT'}));
+ await assert.rejects(()=>env.account.getPlaylists({onProgress:()=>{void env.account.disconnect({revoke:false});}}),error=>error.code==='YOUTUBE_CANCELLED');assert.equal(pages,1);
+ env.respond(()=>json(PROFILE));await login(env);pages=0;
+ env.respond(()=>json({items:[{id:`PL${String(pages++).padStart(20,'0')}`}],...(pages===1?{nextPageToken:'NEXT'}:{})}));
+ assert.equal((await env.account.getPlaylists({onProgress:()=>{throw new Error('UI was unmounted');}})).length,2);
+ const before=env.calls.length;await assert.rejects(()=>env.account.getPlaylists({onProgress:'not-a-function'}),/opções/);assert.equal(env.calls.length,before);
+});
+
+test('the overall library deadline fails explicitly after progress instead of reporting a partial result as complete',async t=>{
+ const env=setup(t);await login(env);let pages=0;const progress=[];
+ env.respond(()=>{env.advance(50000);return json({items:[{id:`PL${String(pages++).padStart(20,'0')}`}],nextPageToken:`NEXT${pages}`});});
+ await assert.rejects(()=>env.account.getPlaylists({onProgress:value=>progress.push(value)}),/lista completa/);
+ assert.equal(pages,3);assert.equal(progress.length,2);assert.deepEqual(progress.at(-1),{loaded:2,pages:2});
+ assert.equal(env.account.getState().connected,true,'a library timeout does not silently revoke a valid authorization');
 });

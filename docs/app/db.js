@@ -1,6 +1,6 @@
 /* Personal records live only in the unlocked encrypted profile; legacy IndexedDB is read-only. */
-import {parseMusicLink} from './music-links.js?v=3.7.0';
-import {localAccount} from './local-account.js?v=3.7.0';
+import {parseMusicLink} from './music-links.js?v=3.8.0';
+import {localAccount} from './local-account.js?v=3.8.0';
 
 const LEGACY_DB_NAME = 'peragym-local';
 const LEGACY_STORES = ['workouts', 'sessions', 'settings', 'loadHistory', 'bodyWeights'];

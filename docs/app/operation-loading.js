@@ -24,10 +24,10 @@ export function createOperationLoading({document=globalThis.document}={}) {
     dialog.addEventListener('cancel',event=>event.preventDefault());
     if(!dialog.isConnected)document.body.append(dialog);
   }
+  function latestMessage() {let newest='';for(const message of operations.values())newest=message;return newest;}
   function showLatest() {
     ensureDialog();
-    let newest='';for(const message of operations.values())newest=message;
-    status.textContent=newest;dialog.setAttribute('aria-busy','true');
+    status.textContent=latestMessage();dialog.setAttribute('aria-busy','true');
     document.body.classList.add('operation-busy');
     if(!dialog.open)dialog.showModal();
   }
@@ -44,11 +44,19 @@ export function createOperationLoading({document=globalThis.document}={}) {
     operations.set(token,messageText(message));
     try{showLatest();}catch(error){operations.delete(token);if(!operations.size)hide();throw error;}
     let released=false;
-    return function release() {
+    function release() {
       if(released||current!==revision)return;
       released=true;operations.delete(token);
       if(operations.size)showLatest();else hide();
+    }
+    release.update=message=>{
+      if(released||current!==revision||!operations.has(token))return;
+      // Replacing an existing Map value preserves its priority below newer work.
+      operations.set(token,messageText(message));
+      // Updating real progress must not reopen a dialog or move keyboard focus.
+      if(status&&dialog?.isConnected)status.textContent=latestMessage();
     };
+    return release;
   }
   function run(message,task) {
     if(typeof task!=='function')return Promise.reject(new TypeError('A operação precisa ser uma função.'));

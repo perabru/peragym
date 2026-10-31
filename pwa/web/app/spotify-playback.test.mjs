@@ -104,7 +104,7 @@ test('play uses only the Spotify API, fresh bearer tokens and the proper track/c
 test('SDK events provide actual metadata and controls delegate without inventing playing states',async t=>{
   const h=environment(t);await h.engine.connect();const sdk=h.instances[0];
   sdk.emit('player_state_changed',{paused:false,position:1250,duration:200000,track_window:{current_track:{name:'Música',artists:[{name:'Artista A'},{name:'Artista B'}],album:{images:[{url:'https://i.scdn.co/image/test-cover'}]}}}});
-  assert.deepEqual(h.engine.getState(),{paused:false,position:1250,duration:200000,title:'Música',artist:'Artista A, Artista B',image:'https://i.scdn.co/image/test-cover',canSeek:true,ready:true});
+  assert.deepEqual(h.engine.getState(),{paused:false,position:1250,duration:200000,title:'Música',artist:'Artista A, Artista B',image:'https://i.scdn.co/image/test-cover',uri:'',canSeek:true,canSkipNext:true,canSkipPrevious:true,ready:true});
   await h.engine.toggle();await h.engine.next();await h.engine.previous();await h.engine.seek(300000);await h.engine.setVolume(0.4);await h.engine.pause();
   assert.ok(sdk.calls.some(call=>call[0]==='togglePlay'));assert.ok(sdk.calls.some(call=>call[0]==='nextTrack'));assert.ok(sdk.calls.some(call=>call[0]==='previousTrack'));
   assert.ok(sdk.calls.some(call=>call[0]==='seek'&&call[1]===200000));assert.ok(sdk.calls.some(call=>call[0]==='setVolume'&&call[1]===0.4));assert.ok(sdk.calls.some(call=>call[0]==='pause'));
@@ -200,4 +200,22 @@ test('invalid media never loads the SDK; missing/invalid account tokens never re
   assert.equal(h.scripts.length,0);assert.equal(h.tokenRequests,0);
   window.Spotify={Player:h.Player};h.account.getAccessToken=async()=> 'unsafe token\r\n';
   await assert.rejects(h.engine.play(media()),/sessão/);assert.equal(h.requests.length,0);
+});
+
+
+test('playlist offsets address the original position beyond 100 without sending a truncated URI array',async t=>{
+ const h=environment(t);
+ await h.engine.play({...media('playlist'),offsetPosition:257});
+ assert.deepEqual(JSON.parse(h.requests.at(-1).request.body),{context_uri:media('playlist').uri,offset:{position:257}});
+ const count=h.requests.length;
+ for(const offsetPosition of [-1,1.5,NaN,Infinity,'2'])await assert.rejects(h.engine.play({...media('playlist'),offsetPosition}));
+ await assert.rejects(h.engine.play({...media(),offsetPosition:1}));assert.equal(h.requests.length,count);
+});
+
+test('SDK exposes only a canonical current item URI for synchronizing the complete playlist',async t=>{
+ const h=environment(t);await h.engine.connect();const sdk=h.instances[0];
+ sdk.emit('player_state_changed',{paused:false,track_window:{current_track:{uri:media().uri}}});
+ assert.equal(h.engine.getState().uri,media().uri);
+ sdk.emit('player_state_changed',{paused:false,track_window:{current_track:{uri:'https://evil.invalid/token'}}});
+ assert.equal(h.engine.getState().uri,'');
 });

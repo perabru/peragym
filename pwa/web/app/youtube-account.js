@@ -8,13 +8,13 @@ const API_BASE = 'https://www.googleapis.com/youtube/v3/';
 const SCOPE = 'https://www.googleapis.com/auth/youtube.readonly';
 const REQUEST_TIMEOUT = 12000;
 const POPUP_TIMEOUT = 120000;
-const MAX_ITEMS = 100;
-const MAX_PAGES = 10;
+const LIST_TIMEOUT = 120000;
 const CLIENT_ID = /^[A-Za-z0-9_-]{6,200}\.apps\.googleusercontent\.com$/;
 const PLAYLIST_ID = /^[A-Za-z0-9_-]{8,150}$/;
 const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
+const PLAYLIST_ITEM_ID = /^[A-Za-z0-9_-]{1,2048}$/;
 const CHANNEL_ID = /^UC[A-Za-z0-9_-]{22}$/;
-const PAGE_TOKEN = /^[A-Za-z0-9_+/=-]{1,2048}$/;
+const PAGE_TOKEN = /^[A-Za-z0-9._~+/=-]{1,2048}$/;
 const fail = message => Object.assign(new Error(message), {name:'YouTubeAccountError'});
 const cancelled = () => Object.assign(fail('A conexão com o YouTube foi encerrada.'), {code:'YOUTUBE_CANCELLED'});
 const cleanText = (value, max=300) => typeof value === 'string' ? value.replace(/[\u0000-\u001f\u007f]/g, '').slice(0,max) : '';
@@ -97,7 +97,7 @@ export function createYouTubeAccount({clientId='',onChange}={}) {
     return promise;
   }
 
-  async function request(resource,parameters,run) {
+  async function request(resource,parameters,run,timeoutMs=REQUEST_TIMEOUT) {
     check(run);
     if(!accessToken||expiresAt<=Date.now()){forget();lastError='Conecte sua conta YouTube para continuar.';notify();throw fail(lastError);}
     if(Date.now()<blockedUntil)throw fail(`O YouTube pediu uma pausa. Tente novamente em ${Math.max(1,Math.ceil((blockedUntil-Date.now())/1000))} segundos.`);
@@ -106,7 +106,7 @@ export function createYouTubeAccount({clientId='',onChange}={}) {
     const controller=new AbortController();let timeout,cancel;
     const interrupted=new Promise((_,reject)=>{
       cancel=()=>{controller.abort();reject(cancelled());};
-      timeout=setTimeout(()=>{controller.abort();reject(fail('O YouTube demorou para responder. Verifique sua conexão e tente novamente.'));},REQUEST_TIMEOUT);
+      timeout=setTimeout(()=>{controller.abort();reject(fail('O YouTube demorou para responder. Verifique sua conexão e tente novamente.'));},timeoutMs);
     });
     const pending={cancel};requests.add(pending);
     try{
@@ -177,20 +177,35 @@ export function createYouTubeAccount({clientId='',onChange}={}) {
       catch{finish({revoked:false});}
     });
   }
-  async function list(resource,parameters,mapItem) {
-    const run=generation,rows=[],visited=new Set();let token;
+  async function list(resource,parameters,mapItem,options={}) {
+    if(!options||typeof options!=='object'||Array.isArray(options)
+      ||(options.onProgress!==undefined&&typeof options.onProgress!=='function'))throw fail('As opções de carregamento do YouTube são inválidas.');
+    const run=generation,rows=[],visited=new Set(),deadline=Date.now()+LIST_TIMEOUT;let token,pages=0,offset=0;
     try{
-      for(let page=0;page<MAX_PAGES;page++){
-        const body=await request(resource,{...parameters,maxResults:50,...(token?{pageToken:token}:{})},run);
-        for(const raw of body.items.slice(0,50)){const item=mapItem(raw);if(item)rows.push(item);if(rows.length===MAX_ITEMS)return rows;}
-        if(body.nextPageToken===undefined||body.nextPageToken===null||body.nextPageToken==='')return rows;
-        if(typeof body.nextPageToken!=='string'||!PAGE_TOKEN.test(body.nextPageToken)||visited.has(body.nextPageToken))throw fail('O YouTube retornou uma paginação inválida. Tente novamente.');
-        token=body.nextPageToken;visited.add(token);
+      while(true){
+        check(run);const remaining=deadline-Date.now();
+        if(remaining<=0)throw fail('O YouTube demorou para carregar a lista completa. Tente novamente.');
+        const body=await request(resource,{...parameters,maxResults:50,...(token?{pageToken:token}:{})},run,Math.min(REQUEST_TIMEOUT,remaining));
+        check(run);
+        if(Date.now()>=deadline)throw fail('O YouTube demorou para carregar a lista completa. Tente novamente.');
+        if(body.items.length>50)throw fail('O YouTube retornou uma página maior que o limite solicitado. Tente novamente.');
+        const next=body.nextPageToken,finished=next===undefined||next==='';
+        if(!finished&&(typeof next!=='string'||!PAGE_TOKEN.test(next)||visited.has(next)))throw fail('O YouTube retornou uma paginação inválida. Tente novamente.');
+        const pageItemIds=new Set();
+        body.items.forEach((raw,index)=>{const item=mapItem(raw,{index:offset+index,pageItemIds});if(item)rows.push(item);});
+        offset+=body.items.length;pages++;
+        if(options.onProgress){
+          const total=body.pageInfo?.totalResults;
+          const progress={loaded:rows.length,...(Number.isSafeInteger(total)&&total>=rows.length?{total}:{}),pages};
+          try{const pending=options.onProgress(progress);if(pending&&typeof pending.catch==='function')pending.catch(()=>{});}catch{/* Rendering progress must not interrupt the library read. */}
+        }
+        check(run);
+        if(finished)return rows;
+        token=next;visited.add(token);
       }
-      return rows;
     }catch(error){setError(error,run);throw error;}
   }
-  function getPlaylists() {
+  function getPlaylists(options) {
     const ids=new Set();
     return list('playlists',{part:'snippet,contentDetails,status',mine:'true'},item=>{
       if(!PLAYLIST_ID.test(item?.id||'')||ids.has(item.id))return null;ids.add(item.id);
@@ -198,20 +213,25 @@ export function createYouTubeAccount({clientId='',onChange}={}) {
       const count=item.contentDetails?.itemCount;if(Number.isInteger(count)&&count>=0)row.itemCount=count;
       const privacy=item.status?.privacyStatus;if(['public','unlisted','private'].includes(privacy))row.privacyStatus=privacy;
       const image=thumbnail(item.snippet);if(image)row.image=image;return row;
-    });
+    },options);
   }
-  function getPlaylistTracks(id) {
+  function getPlaylistTracks(id,options) {
     if(typeof id!=='string'||!PLAYLIST_ID.test(id))return Promise.reject(fail('Escolha uma playlist válida do YouTube.'));
-    return list('playlistItems',{part:'snippet,contentDetails,status',playlistId:id},item=>{
+    return list('playlistItems',{part:'snippet,contentDetails,status',playlistId:id},(item,context)=>{
       const videoId=item?.contentDetails?.videoId||item?.snippet?.resourceId?.videoId;
       if(!VIDEO_ID.test(videoId||''))return null;
+      const itemId=typeof item?.id==='string'&&PLAYLIST_ITEM_ID.test(item.id)?item.id:null;
+      if(itemId&&context.pageItemIds.has(itemId))return null;
+      if(itemId)context.pageItemIds.add(itemId);
       const title=cleanText(item.snippet?.title)||'Vídeo YouTube';
       const row={id:videoId,videoId,provider:'youtube',kind:'video',name:title,title,url:`https://www.youtube.com/watch?v=${videoId}`};
+      if(itemId)row.playlistItemId=itemId;
+      row.position=Number.isSafeInteger(item.snippet?.position)&&item.snippet.position>=0?item.snippet.position:context.index;
       const channel=cleanText(item.snippet?.videoOwnerChannelTitle,160);if(channel)row.channel=channel;
       const image=thumbnail(item.snippet);if(image)row.image=image;
       const privacy=item.status?.privacyStatus;if(['public','unlisted','private'].includes(privacy))row.privacyStatus=privacy;
       return row;
-    });
+    },options);
   }
   return {getState,prepare,connect,disconnect,getPlaylists,getPlaylistTracks};
 }

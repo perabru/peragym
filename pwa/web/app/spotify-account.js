@@ -126,7 +126,7 @@ export function createSpotifyAccount({clientId='',redirectUri='',onChange}={}) {
   function checkCooldown() {
     if(Date.now()<blockedUntil)throw problem(`O Spotify pediu uma pausa. Tente novamente em ${Math.max(1,Math.ceil((blockedUntil-Date.now())/1000))} segundos.`);
   }
-  async function requestJSON(url,init,run,{tokenRequest=false}={}) {
+  async function requestJSON(url,init,run,{tokenRequest=false,playlistItems=false}={}) {
     assertCurrent(run);checkCooldown();
     const pending={controller:new AbortController(),reason:null};
     pendingRequests.add(pending);
@@ -164,7 +164,7 @@ export function createSpotifyAccount({clientId='',redirectUri='',onChange}={}) {
       if(response.status===401||(tokenRequest&&response.status===400&&payload?.error==='invalid_grant')){
         forgetTokens();throw problem('A autorização Spotify expirou ou foi revogada. Conecte sua conta novamente.');
       }
-      if(response.status===403)throw problem('O Spotify não autorizou este acesso. Confira as permissões e se esta conta está liberada no aplicativo Spotify.');
+      if(response.status===403)throw problem(playlistItems?'O Spotify não autorizou os itens desta playlist. A API permite apenas playlists que você possui ou nas quais colabora; confira também as permissões da conta.':'O Spotify não autorizou este acesso. Confira as permissões e se esta conta está liberada no aplicativo Spotify.');
       if(response.status===400)throw problem('O Spotify recusou a solicitação. Conecte novamente e confira o Client ID e o endereço de retorno.');
       throw problem('O Spotify está indisponível no momento. Tente novamente mais tarde.');
     }
@@ -200,9 +200,9 @@ export function createSpotifyAccount({clientId='',redirectUri='',onChange}={}) {
     refreshing=renewal;
     try{return await renewal;}finally{if(refreshing===renewal)refreshing=null;}
   }
-  async function apiGet(url,run) {
+  async function apiGet(url,run,options={}) {
     const token=await getAccessToken();assertCurrent(run);
-    return requestJSON(url,{method:'GET',headers:{Authorization:`Bearer ${token}`,Accept:'application/json'}},run);
+    return requestJSON(url,{method:'GET',headers:{Authorization:`Bearer ${token}`,Accept:'application/json'}},run,options);
   }
   function beginConnection() {
     const run=++generation;cancelPopup('Uma nova conexão Spotify foi iniciada.');abortRequests();forgetTokens();
@@ -335,41 +335,125 @@ export function createSpotifyAccount({clientId='',redirectUri='',onChange}={}) {
     completion.then(()=>{if(completing===completion)completing=null;},()=>{if(completing===completion)completing=null;});
     return completion;
   }
-  function playlistPageURL(raw) {
-    let url;try{url=new URL(raw);}catch{throw problem('O Spotify retornou um endereço de playlists inválido.');}
-    if(url.origin!==API_ORIGIN||url.username||url.password||hasUserInfo(raw)||UNSAFE_URL.test(raw)||url.pathname!=='/v1/me/playlists'||url.hash)throw problem('O Spotify retornou um endereço de playlists inválido.');
+  function paginationError() {return problem('O Spotify retornou uma paginação inválida ou repetida. Tente carregar a lista novamente.');}
+  function pageURL(raw,pathname,{playlistItems=false}={}) {
+    if(typeof raw!=='string'||raw.length>4096||UNSAFE_URL.test(raw)||hasUserInfo(raw))throw paginationError();
+    let url;try{url=new URL(raw);}catch{throw paginationError();}
+    if(url.origin!==API_ORIGIN||url.username||url.password||url.pathname!==pathname||url.hash)throw paginationError();
+    const allowed=playlistItems?['limit','offset','market','additional_types']:['limit','offset'];
     for(const key of url.searchParams.keys()){
-      const values=url.searchParams.getAll(key),n=Number(values[0]);
-      if(!['limit','offset'].includes(key)||values.length!==1||!/^\d+$/.test(values[0])||!Number.isInteger(n)
-        ||(key==='limit'&&(n<1||n>50))||(key==='offset'&&(n<0||n>100000)))throw problem('O Spotify retornou uma paginação de playlists inválida.');
+      const values=url.searchParams.getAll(key),value=values[0];
+      if(!allowed.includes(key)||values.length!==1)throw paginationError();
+      if(key==='limit'||key==='offset'){
+        const n=Number(value);
+        if(!/^\d+$/.test(value)||!Number.isSafeInteger(n)
+          ||(key==='limit'&&(n<1||n>50))
+          ||(key==='offset'&&(n<0||n>Number.MAX_SAFE_INTEGER-50||(!playlistItems&&n>100000))))throw paginationError();
+        url.searchParams.set(key,String(n));
+      }else if(key==='market'){
+        if(!/^[A-Z]{2}$/.test(value))throw paginationError();
+      }else{
+        const types=value.split(',');
+        if(!types.length||new Set(types).size!==types.length||types.some(type=>!['track','episode'].includes(type)))throw paginationError();
+      }
     }
-    return url.href;
+    // Ask for both supported item types on every page, even if a next URL
+    // omits additional_types; a default of tracks alone would lose episodes.
+    if(playlistItems)url.searchParams.set('additional_types','track,episode');
+    if(url.searchParams.get('offset')==='0')url.searchParams.delete('offset');
+    url.searchParams.sort();
+    return url;
   }
-  async function getPlaylists() {
+  function pageDetails(page,url) {
+    if(!Array.isArray(page.items)||page.items.length>Number(url.searchParams.get('limit')||50))throw problem('O Spotify não retornou uma página válida de itens. Tente novamente.');
+    const offset=Number(url.searchParams.get('offset'));
+    if(page.offset!==undefined&&(!Number.isSafeInteger(page.offset)||page.offset!==offset))throw paginationError();
+    if(page.next!==null&&page.next!==undefined&&(typeof page.next!=='string'||!page.next))throw paginationError();
+    return {offset,total:Number.isSafeInteger(page.total)&&page.total>=0?page.total:undefined};
+  }
+  function progress(onProgress,loaded,total,pages,run) {
+    if(typeof onProgress==='function'){
+      try{const pending=onProgress({loaded,...(total===undefined?{}:{total}),pages});if(pending&&typeof pending.catch==='function')pending.catch(()=>{});}catch{}
+    }
+    // A callback can log out or switch profiles synchronously. Do not publish
+    // stale rows or start another authenticated request after that happens.
+    assertCurrent(run);
+  }
+  function playlistRow(item) {
+    if(!item||typeof item!=='object'||Array.isArray(item)||typeof item.id!=='string'||!ID.test(item.id))return null;
+    const row={id:item.id,provider:'spotify',kind:'playlist',name:text(item.name,300).trim()||'Playlist Spotify',uri:`spotify:playlist:${item.id}`,url:`https://open.spotify.com/playlist/${item.id}`};
+    const image=spotifyImage(item.images?.[0]?.url);if(image)row.image=image;
+    const summary=Object.hasOwn(item,'items')?item.items:item.tracks;
+    if(Number.isSafeInteger(summary?.total)&&summary.total>=0)row.count=summary.total;
+    const owner=item.owner;
+    if(owner&&typeof owner==='object'&&!Array.isArray(owner)){
+      const id=text(owner.id,200).trim(),name=text(owner.display_name,160).trim()||id;
+      if(id||name)row.owner={...(id?{id}:{}),...(name?{name}:{})};
+    }
+    return row;
+  }
+  function playlistItemRow(wrapper,position) {
+    const container=wrapper&&typeof wrapper==='object'&&!Array.isArray(wrapper)?wrapper:null;
+    // The 2026 endpoint calls this item. The deprecated track field remains
+    // documented, but must never override an explicit null/current item.
+    const raw=container?(Object.hasOwn(container,'item')?container.item:container.track):null;
+    const item=raw&&typeof raw==='object'&&!Array.isArray(raw)?raw:null;
+    const kind=item?.type==='episode'?'episode':'track';
+    const local=container?.is_local===true||item?.is_local===true||(typeof item?.uri==='string'&&item.uri.startsWith('spotify:local:'));
+    const valid=!!item&&['track','episode'].includes(item.type)&&typeof item.id==='string'&&ID.test(item.id)&&!local;
+    const name=text(item?.name,300).trim()||(local?'Arquivo local indisponível':valid?(kind==='episode'?'Episódio Spotify':'Faixa Spotify'):'Item indisponível');
+    const row={id:valid?item.id:'',provider:'spotify',kind,name,title:name,
+      url:valid?`https://open.spotify.com/${kind}/${item.id}`:'',uri:valid?`spotify:${kind}:${item.id}`:'',position};
+    if(!valid||item.is_playable===false||(item.restrictions&&typeof item.restrictions==='object'&&typeof item.restrictions.reason==='string'&&item.restrictions.reason))row.unavailable=true;
+    let artists=[];
+    if(kind==='track'&&Array.isArray(item?.artists))artists=item.artists.map(artist=>text(artist?.name,160).trim()).filter(Boolean);
+    else if(kind==='episode'){
+      const show=text(item?.show?.name,160).trim()||text(item?.show?.publisher,160).trim();
+      if(show)artists=[show];
+    }
+    if(artists.length)row.artists=artists;
+    if(Number.isSafeInteger(item?.duration_ms)&&item.duration_ms>=0)row.durationMs=item.duration_ms;
+    return row;
+  }
+  async function collectPages(pathname,{onProgress,playlistItems=false}={}) {
+    if(onProgress!==undefined&&typeof onProgress!=='function')throw problem('O observador de carregamento da lista é inválido.');
     const run=generation;
     try{
-      const results=[],ids=new Set(),visited=new Set();let next=`${API_ORIGIN}/v1/me/playlists?limit=50`;
+      const results=[],ids=new Set(),visited=new Set();let next=`${API_ORIGIN}${pathname}?limit=50`,pages=0;
       while(next){
-        const url=playlistPageURL(next);
-        if(visited.has(url)||visited.size>=100)throw problem('Não foi possível concluir a lista de playlists. Tente novamente ou use o link de uma playlist.');
-        visited.add(url);
-        const page=await apiGet(url,run);assertCurrent(run);
-        if(!Array.isArray(page.items))throw problem('O Spotify não retornou uma lista válida de playlists.');
-        for(const item of page.items){
-          if(!item||typeof item.id!=='string'||!ID.test(item.id)||ids.has(item.id))continue;
-          const row={id:item.id,name:text(item.name,300)||'Playlist Spotify',uri:`spotify:playlist:${item.id}`,url:`https://open.spotify.com/playlist/${item.id}`};
-          const image=spotifyImage(item.images?.[0]?.url);if(image)row.image=image;
-          results.push(row);ids.add(item.id);
+        assertCurrent(run);
+        const url=pageURL(next,pathname,{playlistItems}),address=url.href;
+        if(visited.has(address))throw paginationError();
+        visited.add(address);
+        const page=await apiGet(address,run,{playlistItems});assertCurrent(run);
+        const {offset,total}=pageDetails(page,url),end=offset+page.items.length;
+        if(!Number.isSafeInteger(end))throw paginationError();
+        let following=null;
+        if(page.next){
+          following=pageURL(page.next,pathname,{playlistItems});
+          const nextOffset=Number(following.searchParams.get('offset'));
+          if(!page.items.length||nextOffset<=offset||nextOffset<end||visited.has(following.href))throw paginationError();
         }
-        if(page.next!==null&&page.next!==undefined&&typeof page.next!=='string')throw problem('O Spotify retornou uma paginação de playlists inválida.');
-        next=page.next?playlistPageURL(page.next):null;
+        page.items.forEach((item,index)=>{
+          if(playlistItems)results.push(playlistItemRow(item,offset+index));
+          else{
+            const row=playlistRow(item);
+            if(row&&!ids.has(row.id)){results.push(row);ids.add(row.id);}
+          }
+        });
+        pages++;progress(onProgress,results.length,total,pages,run);next=following?.href||null;
       }
-      lastError=null;notify();return results;
+      assertCurrent(run);lastError=null;notify();return results;
     }catch(error){errorState(error,run);throw error;}
+  }
+  function getPlaylists({onProgress}={}) {return collectPages('/v1/me/playlists',{onProgress});}
+  async function getPlaylistTracks(id,{onProgress}={}) {
+    if(typeof id!=='string'||!ID.test(id))throw problem('Escolha uma playlist Spotify válida.');
+    return collectPages(`/v1/playlists/${id}/items`,{onProgress,playlistItems:true});
   }
 
   // Remove stale in-progress authorizations without retaining any credentials.
   const pending=pendingRead();
   if(pending&&(!Number.isFinite(pending.expiresAt)||Date.now()>=pending.expiresAt))pendingRemove();
-  return {getState,connect,connectPopup,completeRedirect,disconnect,getPlaylists,getAccessToken};
+  return {getState,connect,connectPopup,completeRedirect,disconnect,getPlaylists,getPlaylistTracks,getAccessToken};
 }

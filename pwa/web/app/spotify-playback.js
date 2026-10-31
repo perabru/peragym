@@ -5,7 +5,7 @@
 const SDK_URL = 'https://sdk.scdn.co/spotify-player.js';
 const API_URL = 'https://api.spotify.com/v1/me/player/play';
 const TIMEOUT_MS = 12000;
-const EMPTY_STATE = {paused:true, position:0, duration:0, title:'', artist:'', image:'', canSeek:false, ready:false};
+const EMPTY_STATE = {paused:true, position:0, duration:0, title:'', artist:'', image:'', uri:'', canSeek:false, canSkipNext:false, canSkipPrevious:false, ready:false};
 const cancelled = () => Object.assign(new Error('A conexão com o Spotify foi encerrada.'), {code:'SPOTIFY_CANCELLED'});
 const errorMessage = {
   authentication_error:'Sua sessão do Spotify não foi aceita. Conecte sua conta novamente.',
@@ -22,7 +22,10 @@ function playbackBody(media) {
       || media.uri !== `spotify:${media.kind}:${media.id}`) {
     throw new Error('Escolha uma faixa, playlist ou álbum válido do Spotify.');
   }
-  return media.kind === 'track' ? {uris:[media.uri]} : {context_uri:media.uri};
+  if (media.offsetPosition !== undefined && (media.kind !== 'playlist' || !Number.isSafeInteger(media.offsetPosition) || media.offsetPosition < 0)) {
+    throw new Error('Escolha uma posição válida da playlist.');
+  }
+  return media.kind === 'track' ? {uris:[media.uri]} : {context_uri:media.uri,...(media.offsetPosition===undefined?{}:{offset:{position:media.offsetPosition}})};
 }
 
 function apiError(response) {
@@ -143,8 +146,9 @@ export function createSpotifyPlayback({account, onState = () => {}, onError = ()
     } catch { /* Missing artwork is valid; the UI shows its fallback. */ }
     publish({paused:raw.paused !== false, position:finite(raw.position), duration:finite(raw.duration),
       title:typeof track?.name === 'string' ? track.name : '',
+      uri:typeof track?.uri === 'string' && /^spotify:(?:track|episode):[A-Za-z0-9]{22}$/.test(track.uri) ? track.uri : '',
       artist:Array.isArray(track?.artists) ? track.artists.map(a => typeof a?.name === 'string' ? a.name : '').filter(Boolean).join(', ') : '',
-      image, canSeek:!raw.disallows?.seeking, ready:!!deviceId}, current);
+      image, canSeek:!raw.disallows?.seeking, canSkipNext:!raw.disallows?.skipping_next, canSkipPrevious:!raw.disallows?.skipping_prev, ready:!!deviceId}, current);
   }
 
   function connect() {

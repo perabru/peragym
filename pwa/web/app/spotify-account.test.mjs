@@ -459,3 +459,301 @@ test('closing the popup releases its pending authorization without waiting ten m
   const result=await completion;assert.equal(result.connected,false);assert.match(result.error,/fechada/);
   assert.equal(intervals.size,0);assert.equal(env.storage.length,0);assert.equal(env.listeners.get('message').size,0);
 });
+
+// Collection regression cases exercise the public reader contract against
+// realistic API pages; OAuth continues to use the same isolated login helper.
+const spotifyID = number => number.toString(36).padStart(22, '0');
+const playlistItemsURL = (id, offset, extra = '') => `https://api.spotify.com/v1/playlists/${id}/items?limit=50&additional_types=track%2Cepisode&offset=${offset}${extra}`;
+const playlistPage = (offset, items, next = null, total) => ({offset,limit:50,items,next,...(total === undefined ? {} : {total})});
+const spotifyTrack = (id = spotifyID(1), name = 'Faixa de treino') => ({
+  id,type:'track',name,uri:'javascript:untrusted',external_urls:{spotify:'https://untrusted.example/song'},
+  artists:[{name:'Artista\u0000 seguro'}],duration_ms:180_000
+});
+const mediaItem = raw => ({item:raw});
+function assertProgress(progress, loaded, pages, total) {
+  assert.ok(progress.length > 0, 'A completed collection must report its loaded progress');
+  const final = progress.at(-1);
+  assert.equal(final.loaded, loaded);assert.equal(final.pages, pages);
+  if(total === undefined)assert.equal('total' in final,false);else assert.equal(final.total,total);
+  let priorLoaded=0,priorPages=0;
+  for(const value of progress){
+    assert.ok(Number.isSafeInteger(value.loaded)&&value.loaded>=priorLoaded);
+    assert.ok(Number.isSafeInteger(value.pages)&&value.pages>=priorPages);
+    assert.ok(Object.keys(value).every(key=>['loaded','total','pages'].includes(key)),'Progress exposes counts, never tokens or account records');
+    if('total' in value)assert.ok(Number.isSafeInteger(value.total)&&value.total>=0);
+    priorLoaded=value.loaded;priorPages=value.pages;
+  }
+}
+
+test('all 101 playlist pages load without a page cap, with unique IDs and privacy-safe metadata',async t=>{
+  const env=setup(t);await login(env);
+  const progress=[],pages=101,pageSize=50,total=pages*pageSize;
+  let pageRequests=0;
+  env.respond(call=>{
+    const url=new URL(call.url),offset=Number(url.searchParams.get('offset')||0);
+    assert.equal(url.origin,'https://api.spotify.com');assert.equal(url.pathname,'/v1/me/playlists');
+    assert.equal(url.searchParams.get('limit'),'50');assert.equal(call.headers.get('authorization'),'Bearer token-one');
+    assert.equal(offset,pageRequests*pageSize);pageRequests++;
+    const items=Array.from({length:pageSize},(_,index)=>{
+      const value=offset===50&&index===0?49:offset+index;
+      return {id:spotifyID(value),name:`Playlist ${value}\n`,uri:'javascript:wrong',external_urls:{spotify:'https://untrusted.example/list'},
+        items:{total:12},owner:{id:'owner\u0000-id',display_name:'Bruno\n Pera',email:'private@example.com'}};
+    });
+    const next=pageRequests<pages?`https://api.spotify.com/v1/me/playlists?offset=${offset+pageSize}&limit=50`:null;
+    return json(playlistPage(offset,items,next,total));
+  });
+  const rows=await env.account.getPlaylists({onProgress:value=>progress.push(structuredClone(value))});
+  assert.equal(pageRequests,101);assert.equal(rows.length,total-1);assert.equal(new Set(rows.map(row=>row.id)).size,rows.length);
+  assert.deepEqual(rows.slice(0,3).map(row=>row.id),[spotifyID(0),spotifyID(1),spotifyID(2)]);
+  assert.equal(rows.at(-1).id,spotifyID(total-1));assert.equal(rows[49].id,spotifyID(49));assert.equal(rows[50].id,spotifyID(51));
+  assert.equal(rows[0].name,'Playlist 0');assert.equal(rows[0].count,12);
+  assert.deepEqual(rows[0].owner,{id:'owner-id',name:'Bruno Pera'});
+  assert.equal(rows[0].uri,`spotify:playlist:${spotifyID(0)}`);assert.equal(rows[0].url,`https://open.spotify.com/playlist/${spotifyID(0)}`);
+  assert.equal(JSON.stringify(rows).includes('private@example.com'),false);assert.equal(JSON.stringify(rows).includes('untrusted.example'),false);
+  assertProgress(progress,total-1,pages,total);
+});
+
+test('playlist metadata and progress omit invalid totals instead of coercing API values',async t=>{
+  const env=setup(t);await login(env);
+  for(const invalid of ['12',-1,1.5,Number.MAX_SAFE_INTEGER+1,null,true]){
+    const progress=[];
+    env.respond(()=>json({items:[{id:PLAYLIST,name:'Minha ficha',items:{total:invalid},owner:{display_name:'Treino\u0001',email:'never@example.com'}}],total:invalid,next:null}));
+    const rows=await env.account.getPlaylists({onProgress:value=>progress.push(structuredClone(value))});
+    assert.equal(rows.length,1);assert.equal('count' in rows[0],false,String(invalid));
+    assert.deepEqual(rows[0].owner,{name:'Treino'});assertProgress(progress,1,1);
+    assert.equal(JSON.stringify(rows).includes('never@example.com'),false);
+  }
+});
+
+test('all 12 playlist-item pages preserve more than 100 positions, duplicates and unavailable placeholders',async t=>{
+  const env=setup(t);await login(env);
+  const progress=[],pages=12,pageSize=50,total=pages*pageSize;
+  let requests=0;
+  const rawAt=position=>{
+    if(position%53===0)return {item:null,track:spotifyTrack(spotifyID(9999),'Never use this fallback')};
+    if(position%47===0)return mediaItem({...spotifyTrack(spotifyID(position)),is_local:true});
+    const track=spotifyTrack(spotifyID(position%17),`Faixa ${position}\n`);
+    return position%13===0?{track}:mediaItem(track);
+  };
+  env.respond(call=>{
+    const url=new URL(call.url),offset=Number(url.searchParams.get('offset')||0);
+    assert.equal(url.origin,'https://api.spotify.com');assert.equal(url.pathname,`/v1/playlists/${PLAYLIST}/items`);
+    assert.equal(url.searchParams.get('limit'),'50');assert.equal(url.searchParams.get('additional_types'),'track,episode');
+    assert.equal(call.headers.get('authorization'),'Bearer token-one');assert.equal(offset,requests*pageSize);requests++;
+    const items=Array.from({length:pageSize},(_,index)=>rawAt(offset+index));
+    return json(playlistPage(offset,items,requests<pages?playlistItemsURL(PLAYLIST,offset+pageSize):null,total));
+  });
+  const rows=await env.account.getPlaylistTracks(PLAYLIST,{onProgress:value=>progress.push(structuredClone(value))});
+  assert.equal(requests,12);assert.equal(rows.length,600);
+  for(const [position,row]of rows.entries()){
+    assert.equal(row.position,position);assert.equal(row.provider,'spotify');assert.equal(row.kind,'track');
+    assert.equal(typeof row.name,'string');assert.equal(row.title,row.name);
+    if(position%53===0||position%47===0){
+      assert.equal(row.unavailable,true);assert.equal(row.id,'');assert.equal(row.url,'');assert.equal(row.uri,'');
+    }else{
+      const id=spotifyID(position%17);
+      assert.equal(row.id,id);assert.equal(row.name,`Faixa ${position}`);assert.equal(row.url,`https://open.spotify.com/track/${id}`);
+      assert.equal(row.uri,`spotify:track:${id}`);assert.deepEqual(row.artists,['Artista seguro']);assert.equal(row.durationMs,180_000);
+    }
+  }
+  assert.equal(rows[1].id,rows[18].id,'Repeated tracks represent distinct playlist positions');
+  assertProgress(progress,600,12,600);
+});
+
+test('current item records take precedence over legacy track records, including explicit null and malformed items',async t=>{
+  const env=setup(t);await login(env);
+  const first=spotifyID(301),second=spotifyID(302),episode=spotifyID(303),unplayable=spotifyID(304);
+  const fallback=spotifyTrack(second,'Legacy fallback');
+  const items=[
+    {item:spotifyTrack(first,'Current\u0000 song'),track:fallback},
+    {item:null,track:fallback},
+    {item:{},track:fallback},
+    {item:false,track:fallback},
+    {track:fallback},
+    mediaItem({id:episode,type:'episode',name:'Episode\n title',uri:'spotify:track:wrong',external_urls:{spotify:'javascript:bad'},show:{name:'Show\u0000 name',publisher:'Publisher\r'}}),
+    mediaItem({...spotifyTrack(unplayable,'Unavailable\r song'),is_playable:false}),
+    mediaItem({...spotifyTrack(spotifyID(305)),type:'audiobook'}),
+    mediaItem({...spotifyTrack(spotifyID(306)),is_local:true}),
+    {is_local:true,item:spotifyTrack(spotifyID(307))},
+    mediaItem({...spotifyTrack(),id:'not-a-valid-spotify-id'}),
+    null,
+    {track:null}
+  ];
+  env.respond(()=>json(playlistPage(0,items,null,items.length)));
+  const rows=await env.account.getPlaylistTracks(PLAYLIST);
+  assert.equal(rows.length,items.length);assert.equal(rows[0].id,first);assert.equal(rows[0].name,'Current song');
+  assert.equal(rows[4].id,second);assert.equal(rows[4].name,'Legacy fallback');
+  assert.deepEqual(rows.map(row=>row.position),items.map((_,index)=>index));
+  for(const position of [1,2,3,7,8,9,10,11,12]){
+    const row=rows[position];assert.equal(row.kind,'track');assert.equal(row.unavailable,true);
+    assert.equal(row.id,'');assert.equal(row.url,'');assert.equal(row.uri,'');
+  }
+  assert.equal(rows[5].kind,'episode');assert.equal(rows[5].id,episode);assert.equal(rows[5].name,'Episode title');assert.equal(rows[5].title,'Episode title');
+  assert.equal(rows[5].url,`https://open.spotify.com/episode/${episode}`);assert.equal(rows[5].uri,`spotify:episode:${episode}`);
+  if(rows[5].artists)assert.ok(rows[5].artists.every(value=>typeof value==='string'&&!/[\u0000-\u001f\u007f]/.test(value)));
+  assert.equal(rows[6].id,unplayable);assert.equal(rows[6].unavailable,true);assert.equal(rows[6].uri,`spotify:track:${unplayable}`);
+  assert.equal(rows[6].url,`https://open.spotify.com/track/${unplayable}`);
+  assert.equal(JSON.stringify(rows).includes('javascript:'),false);assert.equal(JSON.stringify(rows).includes('untrusted.example'),false);
+});
+
+test('short API pages can advance by their server cursor while preserving original playlist positions',async t=>{
+  const env=setup(t);await login(env);
+  const progress=[];let page=0;
+  env.respond(call=>{
+    const url=new URL(call.url);
+    if(page++===0)return json({items:[mediaItem(spotifyTrack())],next:playlistItemsURL(PLAYLIST,50,'&market=BR'),total:51});
+    assert.equal(url.searchParams.get('offset'),'50');assert.equal(url.searchParams.get('market'),'BR');
+    return json({offset:50,items:[mediaItem(spotifyTrack())],next:null,total:51});
+  });
+  const rows=await env.account.getPlaylistTracks(PLAYLIST,{onProgress:value=>progress.push(structuredClone(value))});
+  assert.deepEqual(rows.map(row=>row.position),[0,50]);assertProgress(progress,2,2,51);
+});
+
+test('unsafe or overlapping playlist-item cursors are rejected before any second bearer-token request',async t=>{
+  const env=setup(t);await login(env);
+  const path=`/v1/playlists/${PLAYLIST}/items`;
+  const invalid=[
+    `https://api.spotify.com.evil.example${path}?limit=50&offset=1`,
+    `http://api.spotify.com${path}?limit=50&offset=1`,
+    `https://api.spotify.com.${path}?limit=50&offset=1`,
+    `https://user:password@api.spotify.com${path}?limit=50&offset=1`,
+    `https://@api.spotify.com${path}?limit=50&offset=1`,
+    playlistItemsURL(NEXT_PLAYLIST,1),
+    `https://api.spotify.com/v1/playlists/${PLAYLIST}/tracks?limit=50&offset=1`,
+    `https://api.spotify.com/v1/me/playlists?limit=50&offset=1`,
+    playlistItemsURL(PLAYLIST,1,'&access_token=token-one'),
+    playlistItemsURL(PLAYLIST,1,'#access_token=token-one'),
+    playlistItemsURL(PLAYLIST,1,'&fields=items'),
+    `https://api.spotify.com${path}?limit=51&offset=1&additional_types=track%2Cepisode`,
+    `https://api.spotify.com${path}?limit=0&offset=1&additional_types=track%2Cepisode`,
+    `https://api.spotify.com${path}?limit=50&offset=-1&additional_types=track%2Cepisode`,
+    `https://api.spotify.com${path}?limit=50&offset=1.5&additional_types=track%2Cepisode`,
+    `https://api.spotify.com${path}?limit=50&offset=9007199254740992&additional_types=track%2Cepisode`,
+    `https://api.spotify.com${path}?limit=50&offset=1&offset=1&additional_types=track%2Cepisode`,
+    `https://api.spotify.com${path}?limit=50&offset=1&additional_types=artist`,
+    playlistItemsURL(PLAYLIST,1,'&market=Brazil'),
+    playlistItemsURL(PLAYLIST,0),
+    `https://api.spotify.com${path}?offset=0&additional_types=track%2Cepisode&limit=50`
+  ];
+  for(const next of invalid){
+    const before=env.requests.length;
+    env.respond(()=>json(playlistPage(0,[mediaItem(spotifyTrack())],next,2)));
+    await assert.rejects(()=>env.account.getPlaylistTracks(PLAYLIST),Error,next);
+    assert.equal(env.requests.length,before+1,next);
+    assert.equal(env.requests.at(-1).headers.get('authorization'),'Bearer token-one');
+    assert.equal(new URL(env.requests.at(-1).url).origin,'https://api.spotify.com');
+  }
+});
+
+test('playlist-item pagination detects regressions and reordered loops after a valid page',async t=>{
+  const env=setup(t);await login(env);let calls=0;
+  const before=env.requests.length;
+  env.respond(()=>{
+    calls++;
+    return calls===1?json(playlistPage(0,[mediaItem(spotifyTrack())],playlistItemsURL(PLAYLIST,1),3))
+      :json(playlistPage(1,[mediaItem(spotifyTrack())],`https://api.spotify.com/v1/playlists/${PLAYLIST}/items?offset=1&additional_types=track%2Cepisode&limit=50`,3));
+  });
+  await assert.rejects(()=>env.account.getPlaylistTracks(PLAYLIST),Error);
+  assert.equal(env.requests.length,before+2);assert.equal(calls,2);
+});
+
+test('playlist response-offset mismatch, overlapping pages and empty nonterminal pages abort the collection',async t=>{
+  const env=setup(t);await login(env);
+  for(const invalidOffset of [1,'0',-1,Number.MAX_SAFE_INTEGER+1]){
+    const before=env.requests.length;
+    env.respond(()=>json({offset:invalidOffset,items:[mediaItem(spotifyTrack())],next:null}));
+    await assert.rejects(()=>env.account.getPlaylistTracks(PLAYLIST),Error,String(invalidOffset));
+    assert.equal(env.requests.length,before+1);
+  }
+  let calls=0;
+  env.respond(()=>++calls===1?json(playlistPage(0,[mediaItem(spotifyTrack()),mediaItem(spotifyTrack())],playlistItemsURL(PLAYLIST,1),3)):json({items:[],next:null}));
+  await assert.rejects(()=>env.account.getPlaylistTracks(PLAYLIST),Error);assert.equal(calls,1,'The next cursor must not overlap positions already received');
+  env.respond(()=>json(playlistPage(0,[],playlistItemsURL(PLAYLIST,50),50)));
+  await assert.rejects(()=>env.account.getPlaylistTracks(PLAYLIST),Error);
+});
+
+test('malformed item pages or a later 403 reject instead of returning partial tracks or falling back to tracks endpoint',async t=>{
+  const env=setup(t);await login(env);
+  for(const failure of [()=>json({offset:1,items:{not:'an array'},next:null}),()=>json({error:{status:403,message:'forbidden'}},403)]){
+    let calls=0;
+    const before=env.requests.length,progress=[];
+    env.respond(call=>{
+      assert.equal(new URL(call.url).pathname,`/v1/playlists/${PLAYLIST}/items`);
+      return ++calls===1?json(playlistPage(0,[mediaItem(spotifyTrack())],playlistItemsURL(PLAYLIST,1),2)):failure();
+    });
+    await assert.rejects(()=>env.account.getPlaylistTracks(PLAYLIST,{onProgress:value=>progress.push(structuredClone(value))}),Error);
+    assert.equal(calls,2);assert.equal(env.requests.length,before+2);assert.equal(env.account.getState().connected,true);
+    assert.ok(progress.every(value=>value.loaded<=1));
+  }
+  assert.equal(env.requests.some(call=>new URL(call.url).pathname.endsWith('/tracks')),false);
+});
+
+test('empty terminal item pages are valid and unsafe totals never appear in item progress',async t=>{
+  const env=setup(t);await login(env);
+  const emptyProgress=[];
+  env.respond(()=>json({offset:0,items:[],next:null,total:0}));
+  assert.deepEqual(await env.account.getPlaylistTracks(PLAYLIST,{onProgress:value=>emptyProgress.push(structuredClone(value))}),[]);
+  assertProgress(emptyProgress,0,1,0);
+  for(const total of ['1',-1,1.5,Number.MAX_SAFE_INTEGER+1,null,true]){
+    const progress=[];
+    env.respond(()=>json({items:[mediaItem(spotifyTrack())],next:null,total}));
+    assert.equal((await env.account.getPlaylistTracks(PLAYLIST,{onProgress:value=>progress.push(structuredClone(value))})).length,1);
+    assertProgress(progress,1,1);
+  }
+});
+
+test('playlist item readers validate the selected playlist ID before making any API request',async t=>{
+  const env=setup(t);await login(env);const before=env.requests.length;
+  for(const id of ['',null,{},'bad-id',PLAYLIST+'?',PLAYLIST+'/items'])await assert.rejects(()=>env.account.getPlaylistTracks(id),Error);
+  assert.equal(env.requests.length,before);
+});
+
+for(const kind of ['playlists','items'])test(`disconnect inside terminal ${kind} progress cancels the generation instead of returning old account data`,async t=>{
+  const env=setup(t);await login(env);const before=env.requests.length;
+  env.respond(()=>json({items:kind==='playlists'?[{id:PLAYLIST,name:'Uma playlist'}]:[mediaItem(spotifyTrack())],next:null,total:1}));
+  const options={onProgress(value){if(value.pages===1)env.account.disconnect();}};
+  const reading=kind==='playlists'?env.account.getPlaylists(options):env.account.getPlaylistTracks(PLAYLIST,options);
+  await assert.rejects(()=>reading,/encerrada/);
+  assert.equal(env.requests.length,before+1);assert.equal(env.account.getState().connected,false);
+});
+
+test('disconnect aborts an in-flight playlist-item fetch even if the adapter ignores AbortSignal',async t=>{
+  const env=setup(t);await login(env);let signal;
+  env.respond(call=>{signal=call.init.signal;return new Promise(()=>{});});
+  const reading=env.account.getPlaylistTracks(PLAYLIST);
+  for(let index=0;index<8&&!signal;index++)await Promise.resolve();
+  assert.ok(signal);env.account.disconnect();
+  await assert.rejects(()=>reading,/encerrada/);assert.equal(signal.aborted,true);
+  assert.equal(env.account.getState().connected,false);assert.equal(env.account.getState().profile,undefined);
+});
+
+test('playlist collection cursors also reject same-page loops, foreign paths and token-bearing URLs before reuse',async t=>{
+  const env=setup(t);await login(env);
+  for(const next of [
+    'https://api.spotify.com/v1/me/playlists?offset=0&limit=50',
+    'https://api.spotify.com/v1/me/playlists?limit=50&offset=1&access_token=token-one',
+    'https://api.spotify.com/v1/me/playlists?offset=1&limit=50#token-one',
+    `https://api.spotify.com/v1/playlists/${PLAYLIST}/items?offset=1&limit=50`,
+    'https://api.spotify.com/v1/me/playlists?offset=1&offset=1&limit=50'
+  ]){
+    const before=env.requests.length;
+    env.respond(()=>json({offset:0,items:[{id:PLAYLIST,name:'Uma playlist'}],next}));
+    await assert.rejects(()=>env.account.getPlaylists(),Error,next);
+    assert.equal(env.requests.length,before+1,next);
+  }
+});
+
+test('episode show metadata is exposed as safe artist text and invalid durations are omitted',async t=>{
+  const env=setup(t);await login(env);
+  env.respond(()=>json({items:[
+    mediaItem({id:spotifyID(801),type:'episode',name:'Episódio\u0000',show:{name:'Show\n seguro',publisher:'Not chosen',email:'not-exposed@example.com'},duration_ms:75_000}),
+    mediaItem({id:spotifyID(802),type:'episode',name:'Outro episódio',show:{name:'',publisher:'Podcast\r publisher'},duration_ms:-1}),
+    mediaItem({...spotifyTrack(spotifyID(803)),duration_ms:'180000'}),
+    mediaItem({...spotifyTrack(spotifyID(804)),duration_ms:Number.MAX_SAFE_INTEGER+1})
+  ],next:null}));
+  const rows=await env.account.getPlaylistTracks(PLAYLIST);
+  assert.equal(rows[0].name,'Episódio');assert.equal(rows[0].durationMs,75_000);assert.deepEqual(rows[0].artists,['Show seguro']);
+  assert.deepEqual(rows[1].artists,['Podcast publisher']);
+  for(const row of rows.slice(1))assert.equal('durationMs' in row,false);
+  assert.equal(JSON.stringify(rows).includes('not-exposed@example.com'),false);
+});

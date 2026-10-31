@@ -6,15 +6,15 @@ function fixture(){
  const document={activeElement:null};const nodes=[];
  function createElement(tag){
   const classes=new Set(),attributes=new Map(),events=new Map();
-  const node={tagName:tag.toUpperCase(),children:[],open:false,isConnected:false,disabled:false,id:'',className:'',textContent:'',focusCalls:[],
+  const node={tagName:tag.toUpperCase(),children:[],open:false,isConnected:false,disabled:false,id:'',className:'',textContent:'',focusCalls:[],showCalls:0,closeCalls:0,
    classList:{add:value=>classes.add(value),remove:value=>classes.delete(value),contains:value=>classes.has(value)},
    setAttribute(name,value){attributes.set(name,String(value));},getAttribute:name=>attributes.get(name)??null,
    append(...children){for(const child of children){child.parentNode=node;child.isConnected=node.isConnected;node.children.push(child);}},
    replaceChildren(...children){node.children=[];node.append(...children);},
    addEventListener(name,fn){const list=events.get(name)||[];list.push(fn);events.set(name,list);},
    dispatch(name,event){for(const fn of events.get(name)||[])fn(event);},
-   showModal(){assert.equal(node.isConnected,true);node.open=true;document.activeElement=node;},
-   close(){node.open=false;},focus(options){node.focusCalls.push(options);document.activeElement=node;}
+   showModal(){assert.equal(node.isConnected,true);node.showCalls++;node.open=true;document.activeElement=node;},
+   close(){node.closeCalls++;node.open=false;},focus(options){node.focusCalls.push(options);document.activeElement=node;}
   };
   Object.defineProperty(node,'innerHTML',{set(){throw new Error('Messages must never use innerHTML');}});
   nodes.push(node);return node;
@@ -108,4 +108,34 @@ test('clearing an idle helper does not create a dialog or move focus',()=>{
 
 test('a nonfunction task rejects before creating a busy overlay',async()=>{
  const f=fixture();await assert.rejects(f.helper.run('Inválido',null),TypeError);assert.equal(f.dialog(),null);
+});
+
+test('an active release updates real progress in the same dialog without reopening or moving focus',()=>{
+ const f=fixture(),release=f.helper.start('Carregando playlists…'),dialog=f.dialog(),focus=f.document.activeElement;
+ assert.equal(typeof release.update,'function');release.update('Carregadas 50 playlists…');
+ assert.equal(f.dialog(),dialog);assert.equal(f.status().textContent,'Carregadas 50 playlists…');assert.equal(dialog.showCalls,1);assert.equal(dialog.closeCalls,0);assert.equal(f.document.activeElement,focus);assert.equal(f.previous.focusCalls.length,0);
+ release.update('<script>alert(1)</script>');assert.equal(f.status().textContent,'<script>alert(1)</script>');release();assert.equal(dialog.closeCalls,1);
+});
+
+test('updating an older operation preserves the newer operation priority until it finishes',()=>{
+ const f=fixture(),older=f.helper.start('Carregando playlists…'),newer=f.helper.start('Abrindo player…');
+ older.update('Carregadas 100 playlists…');assert.equal(f.status().textContent,'Abrindo player…');
+ newer.update('Player conectado.');assert.equal(f.status().textContent,'Player conectado.');assert.equal(f.dialog().showCalls,1);
+ newer();assert.equal(f.status().textContent,'Carregadas 100 playlists…');assert.equal(f.dialog().open,true);older();
+});
+
+test('updates after release never recreate busy UI or overwrite another operation',()=>{
+ const f=fixture(),old=f.helper.start('Primeira operação');old();old.update('Resposta tardia');assert.equal(f.dialog().open,false);assert.equal(f.status().textContent,'');
+ const next=f.helper.start('Operação atual');old.update('Outro retorno tardio');assert.equal(f.status().textContent,'Operação atual');assert.equal(f.dialog().showCalls,2);next();
+});
+
+test('clear invalidates pending progress callbacks even when a new profile starts an operation',()=>{
+ const f=fixture(),old=f.helper.start('Perfil anterior');f.helper.clear();
+ old.update('Dado antigo');assert.equal(f.dialog().open,false);assert.equal(f.status().textContent,'');
+ const current=f.helper.start('Novo perfil');old.update('Retorno do perfil anterior');assert.equal(f.status().textContent,'Novo perfil');assert.equal(f.dialog().showCalls,2);current();
+});
+
+test('a progress update cannot reopen an externally closed dialog',()=>{
+ const f=fixture(),release=f.helper.start('Carregando…'),dialog=f.dialog();dialog.close();const focus=f.document.activeElement;
+ release.update('Carregadas 50 linhas…');assert.equal(dialog.open,false);assert.equal(dialog.showCalls,1);assert.equal(f.document.activeElement,focus);release();
 });

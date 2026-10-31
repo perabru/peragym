@@ -17,7 +17,7 @@ const flush=async()=>{for(let n=0;n<12;n++)await Promise.resolve();};
 async function harness(t,{activeSession=null,confirm=true}={}){
  let now=1_800_000_100_000,model=initialData(),renderCount=0,pendingRecovery=false,authRenderCount=0;
  model.activeSession=clone(activeSession);
- const calls=[],notices=[],confirmations=[],playerCalls=[],loadingCalls=[],editorEvents=[],deferred=new Map(),timers=new Map(),elements=new Map();
+ const calls=[],notices=[],confirmations=[],playerCalls=[],loadingCalls=[],loadingOperations=[],editorEvents=[],deferred=new Map(),timers=new Map(),elements=new Map();
  let nextTimer=0;
  function element(selector){
   if(elements.has(selector))return elements.get(selector);
@@ -48,9 +48,10 @@ async function harness(t,{activeSession=null,confirm=true}={}){
  };
  const context={console,URL,URLSearchParams,structuredClone,Date:class Clock extends Date{constructor(...args){super(...(args.length?args:[now]));}static now(){return now;}},
   document,location:new URL('https://perabru.github.io/peragym/docs/app/'),navigator:{onLine:true},sessionStorage:{getItem(){return null;},setItem(){},removeItem(){}},localAccount,store,
-  createOperationLoading:()=>({run:(message,task)=>{loadingCalls.push(message);return task();},start:()=>()=>{},clear(){},track:(_message,promise)=>promise}),
+  createOperationLoading:()=>({run:(message,task)=>{loadingCalls.push(message);return task();},start:message=>{loadingCalls.push(message);const operation={message,updates:[],releases:0};loadingOperations.push(operation);const release=()=>{operation.releases++;};release.update=value=>{operation.updates.push(value);};return release;},clear(){},track:(_message,promise)=>promise}),
+  readMusicConnectionConfig:()=>({spotifyClientId:'',googleClientId:''}),saveMusicConnectionConfig(){},clearMusicConnectionConfig(){},
   createLocalBiometric:()=>({}),createLocalAuthUI:()=>({hasPendingRecovery:()=>pendingRecovery,render(){authRenderCount++;},settingsMarkup:()=>'',bindSettings(){},reset:async()=>{},initialize:async()=>{}}),
-  createMusicPlayer:()=>({close(){playerCalls.push({name:'close'});},load:async value=>{playerCalls.push({name:'load',value:clone(value)});},openAccount:(provider,profile)=>{playerCalls.push({name:'openAccount',provider,profile:clone(profile)});},setMessage:message=>{playerCalls.push({name:'setMessage',message});}}),createYouTubeAccount:()=>({}),createSpotifyAccount:()=>({}),parseMusicLink,renderChart:()=>'',filterRange:points=>points,summarize:()=>({count:0,last:null}),
+  createMusicPlayer:()=>({close(){playerCalls.push({name:'close'});},load:async value=>{playerCalls.push({name:'load',value:clone(value)});},loadQueue:async(items,options)=>{playerCalls.push({name:'loadQueue',items:clone(items),options:clone(options)});return {index:options.index,length:items.length};},getQueueState:()=>null,openAccount:(provider,profile)=>{playerCalls.push({name:'openAccount',provider,profile:clone(profile)});},setMessage:message=>{playerCalls.push({name:'setMessage',message});}}),createYouTubeAccount:()=>({}),createSpotifyAccount:()=>({}),parseMusicLink,renderChart:()=>'',filterRange:points=>points,summarize:()=>({count:0,last:null}),
   setInterval:(fn,ms)=>{const id=++nextTimer;timers.set(id,{fn,ms});return id;},clearInterval:id=>timers.delete(id),setTimeout:(fn,ms)=>{const id=++nextTimer;timers.set(id,{fn,ms});return id;},clearTimeout:id=>timers.delete(id),
   __showEditor:value=>{editorEvents.push({workout:clone(value),active:clone(vmContext.__appTest.getState().active),saved:clone(model.activeSession)});element('#editor').open=true;},
   __render:()=>{renderCount++;},__notify:message=>notices.push(String(message)),__ask:(...args)=>{confirmations.push(args);return Promise.resolve(typeof confirm==='function'?confirm(...args):confirm);}};
@@ -66,10 +67,10 @@ async function harness(t,{activeSession=null,confirm=true}={}){
   }
  }
  source=source.replace(/^import\s+[^;]+;\s*$/gm,'').replaceAll('import.meta.url',JSON.stringify(APP_URL.href)).replace(/\ninit\(\);?\s*$/,'\n');
- source+='\nconst productionRender=render;render=globalThis.__render;notify=globalThis.__notify;ask=globalThis.__ask;if(typeof showWorkoutEditor==="function")showWorkoutEditor=globalThis.__showEditor;globalThis.__appTest={nav,hasLocalAccess,productionRender,handle,card,detailView,historyView,openEditor,saveEditor,setDraft(value){readDraft=()=>structuredClone(value);},activateMusic,lockApp,setAccounts(spotify,youtube){spotifyAccount=spotify;youtubeAccount=youtube;},setState(value){if("active"in value)active=structuredClone(value.active);if(value.data)data=structuredClone(value.data);if("selectedId"in value)selectedId=value.selectedId;if(value.page)page=value.page;},getState(){return structuredClone({active,data,selectedId,page,handling,restUntil,spotifyPlaylists,youtubePlaylists,youtubeTracks});},updateSessionTimer};';
+ source+='\nconst productionRender=render;render=globalThis.__render;notify=globalThis.__notify;ask=globalThis.__ask;if(typeof showWorkoutEditor==="function")showWorkoutEditor=globalThis.__showEditor;globalThis.__appTest={nav,hasLocalAccess,productionRender,handle,card,detailView,historyView,openEditor,saveEditor,prepareYouTube,rememberMusic,loadMusicPlaylist,loadSpotifyTracks,loadYouTubeTracks,playMusicQueue,musicTrackResults,musicLibraryResults,musicView,setDraft(value){readDraft=()=>structuredClone(value);},activateMusic,lockApp,setAccounts(spotify,youtube){spotifyAccount=spotify;youtubeAccount=youtube;},setState(value){if("active"in value)active=structuredClone(value.active);if(value.data)data=structuredClone(value.data);if("selectedId"in value)selectedId=value.selectedId;if(value.page)page=value.page;if("musicTrackPage"in value)musicTrackPage=value.musicTrackPage;if("musicTrackSearch"in value)musicTrackSearch=value.musicTrackSearch;if("musicPlaylistSearch"in value)musicPlaylistSearch=value.musicPlaylistSearch;},getState(){return structuredClone({active,data,selectedId,page,handling,restUntil,spotifyPlaylists,youtubePlaylists,spotifyTracks,youtubeTracks,selectedMusicPlaylist,musicTrackPage,musicTrackSearch,musicPlaylistSearch,musicPlaylistFailure});},updateSessionTimer};';
  const vmContext=vm.createContext(context);vm.runInContext(source,vmContext,{filename:'production-app.js'});
  const app=vmContext.__appTest;app.setState({active:activeSession,data:model,selectedId:activeSession?.id??workout.id,page:'fichas'});
- return {app,store,calls,notices,confirmations,playerCalls,loadingCalls,editorEvents,elements,setRecoveryPending:value=>{pendingRecovery=value;},authRenders:()=>authRenderCount,accountState:()=>clone(authState),model:()=>clone(model),renders:()=>renderCount,now:()=>now,advance:ms=>{now+=ms;},
+ return {app,store,calls,notices,confirmations,playerCalls,loadingCalls,loadingOperations,editorEvents,elements,setRecoveryPending:value=>{pendingRecovery=value;},authRenders:()=>authRenderCount,accountState:()=>clone(authState),setAccountState:value=>{authState={...authState,...clone(value)};},model:()=>clone(model),renders:()=>renderCount,now:()=>now,advance:ms=>{now+=ms;},
   deferNext(name){let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});const queue=deferred.get(name)||[];queue.push({promise});deferred.set(name,queue);return {resolve,reject};},
   sync(){app.setState({data:model});},element};
 }
@@ -183,15 +184,15 @@ function fakeMusicAccount({provider='spotify',connected=true,rows=[],pending=nul
 }
 function promiseControl(){let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return{promise,resolve,reject};}
 
-for(const provider of ['spotify','youtube'])test(`verified ${provider} account opens its page/player and selects an available playlist`,async t=>{
+for(const provider of ['spotify','youtube'])test(`verified ${provider} account opens its page/player and loads playlists without autoplay`,async t=>{
  const env=await harness(t);
  const row=provider==='spotify'?{id:'37i9dQZF1DXcBWIGoYBM5M',name:'Treino',url:'https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M'}:{id:'PLabcdefghijklmnopqrstuv',name:'Treino',privacyStatus:'public',url:'https://www.youtube.com/playlist?list=PLabcdefghijklmnopqrstuv'};
  const account=fakeMusicAccount({provider,rows:[row]});env.app.setAccounts(provider==='spotify'?account:null,provider==='youtube'?account:null);
  await env.app.activateMusic(provider);
  assert.equal(env.app.getState().page,'musica');assert.equal(env.app.getState().selectedId,null);
  assert.equal(env.playerCalls.find(c=>c.name==='openAccount')?.provider,provider);
- const loaded=env.playerCalls.find(c=>c.name==='load');assert.ok(loaded,'A permitted available playlist should reach the official player');assert.equal(loaded.value.provider,provider);
- assert.equal(env.model().musicLinks.length,1);assert.ok(env.loadingCalls.some(label=>label.includes('playlists')));
+ assert.equal(env.playerCalls.some(c=>c.name==='load'||c.name==='loadQueue'),false,'Connecting only opens the account/library; playback needs a selection');
+ assert.equal(env.model().musicLinks.length,0);assert.ok(env.loadingCalls.some(label=>label.includes('playlists')));
 });
 
 test('a failed account authorization never opens a connected player or switches the workout screen',async t=>{
@@ -287,4 +288,106 @@ test('pending recovery acknowledgement keeps app navigation and workout mutation
  assert.equal(env.element('#settings-open').disabled,true);assert.equal(env.authRenders(),1);
  env.setRecoveryPending(false);assert.equal(env.app.hasLocalAccess(),true);
  await env.app.handle('start',{id:workout.id});assert.equal(env.model().activeSession.id,workout.id);
+});
+
+const SPOTIFY_LIST={id:'37i9dQZF1DXcBWIGoYBM5M',name:'Playlist completa',provider:'spotify',kind:'playlist',url:'https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M'};
+function trackRows(provider,count){
+ return Array.from({length:count},(_,position)=>{
+  const id=provider==='spotify'?'track'+String(position).padStart(17,'0'):'video'+String(position).padStart(6,'0');
+  return {provider,kind:provider==='spotify'?'track':'video',id,...(provider==='youtube'?{videoId:id}:{}),name:`Faixa ${String(position+1).padStart(4,'0')}`,artists:[`Artista ${position}`],position,
+   url:provider==='spotify'?`https://open.spotify.com/track/${id}`:`https://www.youtube.com/watch?v=${id}`,uri:provider==='spotify'?`spotify:track:${id}`:undefined};
+ });
+}
+function completeLibrary(provider,{playlists=[],tracks=[],loadTracks}={}){
+ let connected=true;const api=[];
+ function progress(options,total){for(let loaded=50;loaded<total;loaded+=50)options?.onProgress?.({loaded,total,pages:Math.ceil(loaded/50)});options?.onProgress?.({loaded:total,total,pages:Math.max(1,Math.ceil(total/50))});}
+ const account={api,getState:()=>({configured:true,ready:true,connected,profile:connected?{id:`${provider}-authorized`,displayName:'Conta confirmada pelo serviço'}:undefined}),
+  getPlaylists:async options=>{api.push({method:'getPlaylists',options});progress(options,playlists.length);return clone(playlists);},
+  getPlaylistTracks:async(id,options)=>{api.push({method:'getPlaylistTracks',id,options});if(loadTracks)return loadTracks(id,options);progress(options,tracks.length);return clone(tracks);},
+  connectPopup:async()=>({connected}),connect:async()=>({connected}),disconnect(){connected=false;return Promise.resolve({revoked:false});}};
+ return account;
+}
+
+test('all 125 YouTube playlists and all tracks are selectable in order without deduplicating repeated videos',async t=>{
+ const env=await harness(t),rows=trackRows('youtube',125);rows[100]={...rows[1],position:100};
+ const playlists=Array.from({length:125},(_,i)=>({id:'PL'+String(i).padStart(22,'0'),name:`Playlist ${i+1}`,provider:'youtube',kind:'playlist',url:'https://www.youtube.com/playlist?list=PL'+String(i).padStart(22,'0')}));
+ const account=completeLibrary('youtube',{playlists,tracks:rows});env.app.setAccounts(null,account);await env.app.activateMusic('youtube');
+ assert.equal(env.app.getState().youtubePlaylists.length,125);assert.ok(env.app.musicLibraryResults().includes('Playlist 125'));assert.equal(env.playerCalls.some(c=>c.name==='loadQueue'),false);
+ env.app.setState({musicPlaylistSearch:'Playlist 125'});const results=env.app.musicLibraryResults();assert.ok(results.includes('data-index="124"'));assert.equal(results.includes('data-index="0"'),false);
+ await env.app.loadYouTubeTracks(124);assert.equal(env.app.getState().youtubeTracks.length,125);await env.app.playMusicQueue();
+ const queue=env.playerCalls.find(c=>c.name==='loadQueue');assert.equal(queue.items.length,125);assert.deepEqual(queue.items.map(row=>row.position),Array.from({length:125},(_,i)=>i));assert.equal(queue.items[1].url,queue.items[100].url);assert.equal(queue.options.context,undefined);
+ assert.deepEqual(account.api.map(call=>call.method),['getPlaylists','getPlaylistTracks']);assert.equal(account.api[1].id,playlists[124].id);
+ assert.ok(env.loadingOperations.some(op=>op.updates.some(message=>message.includes('125 de 125'))));assert.ok(env.loadingOperations.every(op=>op.releases===1));
+});
+
+test('all 600 Spotify rows retain their original composition/context while only available tracks enter the queue',async t=>{
+ const env=await harness(t),rows=trackRows('spotify',600);rows[150]={...rows[3],position:150};
+ for(const row of rows)if(row.position%17===0)row.unavailable=true;
+ rows[13].kind='episode';rows[14].url='';
+ const account=completeLibrary('spotify',{playlists:[SPOTIFY_LIST],tracks:rows});env.app.setAccounts(account,null);await env.app.activateMusic('spotify');await env.app.loadSpotifyTracks(0);
+ assert.equal(env.app.getState().spotifyTracks.length,600);assert.equal(env.playerCalls.some(c=>c.name==='loadQueue'),false);
+ await env.app.playMusicQueue(150);const queue=env.playerCalls.find(c=>c.name==='loadQueue'),positions=Array.from({length:600},(_,i)=>i).filter(i=>i%17!==0&&i!==13&&i!==14);
+ assert.deepEqual(queue.items.map(row=>row.position),positions);assert.equal(queue.options.index,positions.indexOf(150));assert.equal(queue.items[queue.options.index].position,150);assert.equal(queue.items.filter(row=>row.url===rows[3].url).length,2);
+ assert.deepEqual(queue.options.context,{provider:'spotify',kind:'playlist',id:SPOTIFY_LIST.id,uri:`spotify:playlist:${SPOTIFY_LIST.id}`,url:SPOTIFY_LIST.url});
+ assert.deepEqual(account.api.map(call=>call.method),['getPlaylists','getPlaylistTracks']);assert.ok(env.loadingOperations.some(op=>op.updates.some(message=>message.includes('600 de 600'))));assert.ok(env.loadingOperations.every(op=>op.releases===1));
+});
+
+test('second-page track results include track 101 and search retains the original queue index',async t=>{
+ const env=await harness(t),rows=trackRows('spotify',600);rows[544].artists=['Banda Única'];const account=completeLibrary('spotify',{playlists:[SPOTIFY_LIST],tracks:rows});
+ env.app.setAccounts(account,null);await env.app.activateMusic('spotify');await env.app.loadSpotifyTracks(0);env.app.setState({musicTrackPage:1});
+ const second=env.app.musicTrackResults();assert.ok(second.includes('Faixa 0101'));assert.ok(second.includes('data-index="100"'));assert.ok(second.includes('101–200 de 600'));assert.equal(second.includes('Faixa 0001'),false);
+ env.app.setState({musicTrackSearch:'Única',musicTrackPage:4});const search=env.app.musicTrackResults();assert.ok(search.includes('Faixa 0545'));assert.ok(search.includes('data-index="544"'));assert.ok(search.includes('1–1 de 1'));assert.equal(env.app.getState().musicTrackPage,0);
+});
+
+for(const boundary of ['lock','disconnect'])test(`late playlist tracks after ${boundary} cannot expose rows, enqueue music or update progress`,async t=>{
+ const env=await harness(t),pending=promiseControl();let report;
+ const account=completeLibrary('spotify',{playlists:[SPOTIFY_LIST],loadTracks:(_id,options)=>{report=options.onProgress;report({loaded:50,total:600,pages:1});return pending.promise;}});
+ env.app.setAccounts(account,null);await env.app.activateMusic('spotify');const loading=env.app.loadMusicPlaylist('spotify',SPOTIFY_LIST,{autoplay:true});await flush();const operation=env.loadingOperations.at(-1),before=operation.updates.length;
+ if(boundary==='lock')await env.app.lockApp();else await env.app.handle('spotify-disconnect');
+ report({loaded:600,total:600,pages:12});pending.resolve(trackRows('spotify',600));await loading;
+ assert.equal(env.app.getState().selectedMusicPlaylist,null);assert.deepEqual(env.app.getState().spotifyTracks,[]);assert.equal(env.playerCalls.some(c=>c.name==='loadQueue'),false);assert.equal(operation.updates.length,before);assert.equal(operation.releases,1);
+});
+
+test('a late playlist error preserves the previous selection without starting playback',async t=>{
+ const env=await harness(t),pending=promiseControl(),first={...SPOTIFY_LIST,name:'Anterior'},second={...SPOTIFY_LIST,id:'playlist00000000000001',name:'Nova',url:'https://open.spotify.com/playlist/playlist00000000000001'};
+ const firstRows=trackRows('spotify',125);let count=0;
+ const account=completeLibrary('spotify',{playlists:[first,second],loadTracks:()=>++count===1?Promise.resolve(firstRows):pending.promise});env.app.setAccounts(account,null);await env.app.activateMusic('spotify');await env.app.loadSpotifyTracks(0);
+ const loading=env.app.loadSpotifyTracks(1);await flush();assert.equal(env.app.getState().selectedMusicPlaylist.name,'Anterior');pending.reject(new Error('A segunda página não carregou'));await loading;
+ assert.equal(env.app.getState().selectedMusicPlaylist.name,'Anterior');assert.deepEqual(env.app.getState().spotifyTracks,firstRows);assert.equal(env.playerCalls.some(c=>c.name==='loadQueue'),false);assert.ok(env.notices.includes('A segunda página não carregou'));assert.ok(env.loadingOperations.every(op=>op.releases===1));
+});
+
+test('official account connection remains click-synchronous and never requests a guest password',async t=>{
+ const env=await harness(t);env.setAccountState({guest:true,profileId:'guest-local',profile:{id:'guest-local',name:'Visitante',username:'visitante'}});
+ const account=completeLibrary('spotify',{playlists:[SPOTIFY_LIST]});let gesture=true,argumentsSeen;
+ account.connectPopup=(...args)=>{assert.equal(gesture,true);argumentsSeen=args;return Promise.resolve({connected:true});};env.app.setAccounts(account,null);
+ const connecting=env.app.handle('spotify-connect');gesture=false;await connecting;
+ assert.deepEqual(argumentsSeen,[]);assert.equal(env.app.getState().page,'musica');assert.equal(env.playerCalls.some(c=>c.name==='loadQueue'),false);assert.equal(/type=["']password["']/.test(env.app.musicView()),false);assert.equal(account.api.filter(call=>call.method==='getPlaylists').length,1);
+});
+
+test('replacing a pending YouTube SDK preparation immediately prepares the new account and ignores the old completion',async t=>{
+ const env=await harness(t),oldPending=promiseControl(),newPending=promiseControl();let oldCalls=0,newCalls=0,ready=false;
+ const oldAccount={getState:()=>({configured:true,ready:false}),prepare(){oldCalls++;return oldPending.promise;}};
+ const newAccount={getState:()=>({configured:true,ready}),prepare(){newCalls++;return newPending.promise;}};
+ env.app.setState({page:'musica'});env.app.setAccounts(null,oldAccount);const oldPreparing=env.app.prepareYouTube();await env.app.prepareYouTube();assert.equal(oldCalls,1);
+ env.app.setAccounts(null,newAccount);const newPreparing=env.app.prepareYouTube();assert.equal(newCalls,1);
+ const renders=env.renders();oldPending.reject(new Error('Erro da configuração antiga'));await oldPreparing;
+ assert.equal(env.renders(),renders);assert.equal(env.notices.length,0);await env.app.prepareYouTube();assert.equal(newCalls,1,'old finally cannot release the new account preparation guard');
+ ready=true;newPending.resolve();await newPreparing;assert.equal(env.renders(),renders+1);await env.app.prepareYouTube();assert.equal(newCalls,1);
+});
+
+test('an API access error offers the official player only after explicit fallback activation',async t=>{
+ const env=await harness(t),account=completeLibrary('spotify',{playlists:[SPOTIFY_LIST],loadTracks:()=>Promise.reject(new Error('Spotify 403: acesso à playlist negado.'))});
+ env.app.setAccounts(account,null);await env.app.activateMusic('spotify');await env.app.loadSpotifyTracks(0);
+ assert.equal(env.app.getState().selectedMusicPlaylist,null);assert.equal(env.playerCalls.some(c=>c.name==='load'||c.name==='loadQueue'),false);
+ const view=env.app.musicView();assert.ok(view.includes('Spotify 403: acesso à playlist negado.'));assert.ok(view.includes('data-action="music-playlist-embed"'));assert.ok(view.includes('Abrir player oficial'));
+ await env.app.handle('music-playlist-embed');const fallback=env.playerCalls.filter(c=>c.name==='load');assert.equal(fallback.length,1);assert.equal(fallback[0].value.url,SPOTIFY_LIST.url);assert.equal(env.playerCalls.some(c=>c.name==='loadQueue'),false);
+ assert.equal(account.api.filter(c=>c.method==='getPlaylistTracks').length,1,'explicit fallback must not retry the failed API request');
+});
+
+for(const outcome of ['resolve','reject'])test(`a delayed recent-link write that ${outcome}s after a profile lock cannot update the next profile UI`,async t=>{
+ const env=await harness(t),pending=env.deferNext('setSetting');const remembering=env.app.rememberMusic(SPOTIFY_LIST.url);await flush();await env.app.lockApp();
+ env.setAccountState({unlocked:true,profileId:'profile-b',profile:{id:'profile-b',name:'Outra pessoa',username:'outra'},generation:env.accountState().generation+1});
+ const next=env.app.getState().data;next.musicLinks=['https://www.youtube.com/watch?v=video000999'];env.app.setState({data:next});
+ if(outcome==='resolve')pending.resolve();else pending.reject(new Error('Gravação do perfil anterior falhou'));await remembering;
+ assert.deepEqual(env.app.getState().data.musicLinks,next.musicLinks);assert.equal(env.notices.includes('Não foi possível salvar o link nos recentes.'),false);
 });
