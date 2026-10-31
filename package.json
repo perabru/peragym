@@ -1,0 +1,11 @@
+{
+  "name": "peragym-ui-tests",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "test:ui": "node tests/ui.test.cjs"
+  },
+  "devDependencies": {
+    "playwright": "1.62.1"
+  }
+}
