@@ -14,7 +14,7 @@
 
   if (!document.querySelector('link[href^="/pwa.css"]')) {
     const styles = document.createElement('link');
-    styles.rel = 'stylesheet';styles.href = '/pwa.css?v=3.0.0';document.head.append(styles);
+    styles.rel = 'stylesheet';styles.href = '/pwa.css?v=3.1.0';document.head.append(styles);
   }
 
   function updateButtons() {
@@ -95,7 +95,7 @@
     updateButtons();observer.observe(document.body,{childList:true,subtree:true});
     if (!('serviceWorker' in navigator) || !window.isSecureContext) return;
     try {
-      registration=await navigator.serviceWorker.register('/sw.js?v=3.0.0',{scope:'/'});
+      registration=await navigator.serviceWorker.register('/sw.js?v=3.1.0',{scope:'/'});
       await navigator.serviceWorker.ready;
       prepareOffline();
       if(registration.waiting)offerUpdate(registration.waiting);

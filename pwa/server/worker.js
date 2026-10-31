@@ -6,7 +6,7 @@ const ASSETS = __PERAGYM_ASSETS__;
 export const PIX_KEY = 'bruno.pera@unifesp.br';
 export const DONATION_CENTS = 199;
 const enc = new TextEncoder();
-const CSP = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self' https://chatgpt.com";
+const CSP = "default-src 'self'; script-src 'self' https://www.youtube.com https://s.ytimg.com; style-src 'self'; img-src 'self' data:; connect-src 'self'; worker-src 'self'; frame-src 'self' https://www.youtube.com; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self' https://chatgpt.com";
 function json(value,status=200){return new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'}});}
 function redirect(location){return new Response(null,{status:303,headers:{Location:location,'Cache-Control':'no-store'}});}
 

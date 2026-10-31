@@ -54,3 +54,11 @@ Os arquivos de migração em `drizzle/` são históricos e permanecem imutáveis
 ## Referências visuais
 
 Visual inspirado nas referências de cidade tropical neon e fita cassete enviadas pelo usuário. PeraGym mantém identidade própria; não utiliza o logotipo GTA como marca do aplicativo. A fotografia `night-drive.jpg` foi fornecida pelo usuário. Fontes locais Bungee (OFL) e Yellowtail (Apache 2.0), com seus textos de licença em `web/assets/fonts/`. O ícone de salvar é uma fita cassete em SVG. QR Code gerado com `qrcode-generator`.
+
+## Música no aplicativo
+
+A aba Música carrega links de vídeos e playlists públicas do YouTube e YouTube Music no player oficial do YouTube. Os oito links recentes ficam no IndexedDB e no backup. O player permanece visível ao navegar pelas fichas; fecha pelo botão × e pausa quando o aplicativo perde visibilidade ou um formulário cobre a tela. Música requer internet e disponibilidade de incorporação pelo autor.
+
+A conta é acessada pelo link para o site oficial do YouTube Music. O PeraGym não coleta login/senha, não afirma uma conexão OAuth e não importa bibliotecas privadas ou recursos Premium. O player IFrame não fornece autenticação de conta do YouTube Music.
+
+Documentação: [player IFrame](https://developers.google.com/youtube/iframe_api_reference), [requisitos de incorporação](https://developers.google.com/youtube/terms/required-minimum-functionality), [políticas de autenticação](https://developers.google.com/youtube/terms/developer-policies).

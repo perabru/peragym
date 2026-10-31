@@ -1,4 +1,6 @@
 /* PeraGym's personal data stays in this browser's private IndexedDB. */
+import {parseYouTubeLink} from './music-links.js?v=3.1.0';
+
 const DB_NAME = 'peragym-local';
 const VERSION = 1;
 const STORES = ['workouts', 'sessions', 'settings', 'loadHistory', 'bodyWeights'];
@@ -26,6 +28,17 @@ const integer = (raw, min, max, message) => {
   return n;
 };
 const validId = value => typeof value === 'string' && /^[a-zA-Z0-9-]{1,80}$/.test(value);
+function validateMusicLinks(input) {
+  if (!Array.isArray(input) || input.length > 8) invalid('Salve até 8 links públicos do YouTube ou YouTube Music.');
+  return Array.from(input, raw => {
+    if (typeof raw !== 'string') invalid('Cada música precisa de um link público válido do YouTube ou YouTube Music.');
+    let parsed;
+    try { parsed = parseYouTubeLink(raw); } catch { invalid('Um link de música não é um endereço público válido do YouTube ou YouTube Music.'); }
+    if (!parsed || typeof parsed.url !== 'string' || !parsed.url) invalid('Um link de música não é válido.');
+    // Persist only the canonical URL, never the source URL or other parser metadata.
+    return parsed.url;
+  });
+}
 export function validateWorkout(input) {
   if (!input || typeof input !== 'object') invalid('Ficha inválida.');
   if (!Array.isArray(input.exercises) || input.exercises.length < 1 || input.exercises.length > 100) invalid('Adicione de 1 a 100 exercícios à ficha.');
@@ -95,7 +108,8 @@ export async function load() {
     loadHistory: all.loadHistory.sort((a,b) => a.at - b.at),
     bodyWeights: all.bodyWeights.sort((a,b) => a.at - b.at),
     theme: settings.theme || (globalThis.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'),
-    activeSession: settings.activeSession || null
+    activeSession: settings.activeSession || null,
+    musicLinks: settings.musicLinks === undefined ? [] : validateMusicLinks(settings.musicLinks)
   };
 }
 export async function saveWorkout(input) {
@@ -154,8 +168,9 @@ export async function finishWorkout(input) {
   });
 }
 export async function setSetting(key, value) {
-  if (!['theme','activeSession'].includes(key)) invalid('Preferência inválida.');
+  if (!['theme','activeSession','musicLinks'].includes(key)) invalid('Preferência inválida.');
   if (key === 'theme' && !['light','dark'].includes(value)) invalid('Tema inválido.');
+  if (key === 'musicLinks') value = validateMusicLinks(value);
   return transact(['settings'],'readwrite',(stores,done) => {stores.settings.put({key,value});done({ok:true});});
 }
 export async function saveBodyWeight(input) {
@@ -171,6 +186,7 @@ export async function exportBackup() {
 export function validateBackup(raw) {
   if (!raw || raw.app !== 'PeraGym' || raw.version !== 1 || !raw.data) invalid('Este arquivo não é um backup compatível do PeraGym.');
   const d = raw.data;
+  const musicLinks = validateMusicLinks(d.musicLinks === undefined ? [] : d.musicLinks);
   for (const n of ['workouts','sessions','loadHistory','bodyWeights']) if (!Array.isArray(d[n]) || d[n].length > 50000) invalid('O backup possui dados inválidos ou excede o limite de registros.');
   if (d.workouts.length > 1000) invalid('O backup excede o limite de fichas.');
   const workouts = d.workouts.map(w => {
@@ -193,13 +209,14 @@ export function validateBackup(raw) {
   });
   const result = {workouts,bodyWeights,loadHistory,sessions};
   for (const name of Object.keys(result)) if (new Set(result[name].map(r => r.id)).size !== result[name].length) invalid('O backup contém registros duplicados.');
-  return {...result,theme:d.theme==='dark'?'dark':'light'};
+  return {...result,theme:d.theme==='dark'?'dark':'light',musicLinks};
 }
 export async function importBackup(raw) {
   const d = validateBackup(raw); // Validate completely before opening a write transaction.
   return transact(STORES,'readwrite',(stores,done) => {
     STORES.forEach(name => stores[name].clear());
     ['workouts','sessions','loadHistory','bodyWeights'].forEach(name => d[name].forEach(row => stores[name].add(row)));
-    stores.settings.put({key:'theme',value:d.theme});done({ok:true});
+    stores.settings.put({key:'theme',value:d.theme});
+    stores.settings.put({key:'musicLinks',value:d.musicLinks});done({ok:true});
   });
 }

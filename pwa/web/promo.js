@@ -48,7 +48,7 @@
       qr.append(image);
     } else {
       const text = document.createElement('p');
-      text.textContent = payload ? 'Use o código Pix abaixo se quiser apoiar.' : 'Se quiser apoiar, copie a chave Pix abaixo.';
+      text.textContent = payload ? 'Copie o código Pix abaixo para doar.' : 'Copie a chave Pix para doar.';
       qr.append(text);
     }
     // Navigation is intentionally independent of any donation status or amount.
@@ -72,7 +72,7 @@
       } catch (_) {
         // A Pix service outage must never prevent free installation.
         showDonation({pixKey:PIX_KEY});
-        announce('Os dados completos do Pix não carregaram. Você pode copiar a chave se quiser doar ou continuar gratuitamente.');
+        announce('O Pix não carregou. Você pode continuar gratuitamente.');
       } finally { clearTimeout(timeout); loading = null; }
     })();
     return loading;
@@ -89,8 +89,8 @@
 
   async function copy(text, success) {
     try { await navigator.clipboard.writeText(text); announce(success); }
-    catch (_) { announce('Não foi possível copiar automaticamente. Selecione e copie o texto exibido. A instalação gratuita continua disponível.'); }
+    catch (_) { announce('Não foi possível copiar. Selecione o texto e copie manualmente.'); }
   }
-  $('#copy-pix').addEventListener('click', () => copy($('#pix-payload').value, 'Código Pix copiado. A doação é opcional; você já pode continuar gratuitamente.'));
-  $('#copy-key').addEventListener('click', () => copy(PIX_KEY, 'Chave Pix copiada. Doar é opcional e não altera o acesso gratuito ao aplicativo.'));
+  $('#copy-pix').addEventListener('click', () => copy($('#pix-payload').value, 'Código Pix copiado.'));
+  $('#copy-key').addEventListener('click', () => copy(PIX_KEY, 'Chave Pix copiada.'));
 })();

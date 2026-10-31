@@ -1,7 +1,7 @@
 'use strict';
 
 // The app is free. Only static assets are cached; personal records stay in IndexedDB.
-const VERSION = 'peragym-3.0.0';
+const VERSION = 'peragym-3.1.0';
 const PUBLIC_CACHE = `${VERSION}-public`;
 const APP_CACHE = `${VERSION}-app`;
 const CACHE_PREFIX = 'peragym-';
@@ -16,9 +16,10 @@ const PUBLIC_PATHS = new Set([
   '/icons/icon-512.png', '/icons/maskable-512.png', '/icons/apple-touch-icon.png',
   ...THEME_PATHS
 ]);
-const APP_PATHS = new Set([
+const BASE_APP_PATHS = new Set([
   '/app/', '/app/index.html', '/app/style.css', '/app/app.js', '/app/db.js', '/app/charts.js'
 ]);
+const APP_PATHS = new Set([...BASE_APP_PATHS, '/app/music-links.js', '/app/music-player.js']);
 const OFFLINE_PATH = '/offline.html';
 let preparingOffline;
 
@@ -67,7 +68,8 @@ async function tellClients(message, client) {
 
 async function completeShell(cacheName) {
   const cache = await caches.open(cacheName);
-  for (const path of APP_PATHS) {
+  const requiredPaths = cacheName === APP_CACHE ? APP_PATHS : BASE_APP_PATHS;
+  for (const path of requiredPaths) {
     const response = await cache.match(appKey(path));
     if (!response || !appResponse(response, path)) return false;
   }

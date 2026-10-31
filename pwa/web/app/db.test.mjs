@@ -43,3 +43,55 @@ test('body weight edit/delete and atomic backup validation and replacement',asyn
  await db.deleteBodyWeight(saved.id);assert.equal((await db.load()).bodyWeights.length,0);
  await db.importBackup(backup);d=await db.load();assert.equal(d.bodyWeights.length,1);assert.equal(d.theme,'dark');assert.equal(d.sessions.length,1);
 });
+test('music preference defaults empty and stores only canonical public URLs',async()=>{
+ assert.deepEqual((await db.load()).musicLinks,[]);
+ const links=['https://youtu.be/dQw4w9WgXcQ?si=share','https://www.youtube.com/playlist?list=PLabcdefghijk123456'];
+ await db.setSetting('musicLinks',links);
+ assert.deepEqual((await db.load()).musicLinks,[
+  'https://music.youtube.com/watch?v=dQw4w9WgXcQ',
+  'https://music.youtube.com/playlist?list=PLabcdefghijk123456'
+ ]);
+ // Normalize into a new array rather than changing the caller's values.
+ assert.equal(links[0],'https://youtu.be/dQw4w9WgXcQ?si=share');
+ const backup=await db.exportBackup();
+ assert.deepEqual(backup.data.musicLinks,(await db.load()).musicLinks);
+ await db.setSetting('musicLinks',[]);
+ const withSourceLinks=structuredClone(backup);withSourceLinks.data.musicLinks=links;
+ await db.importBackup(withSourceLinks);
+ assert.deepEqual((await db.load()).musicLinks,backup.data.musicLinks);
+});
+test('invalid music preferences reject before changing any local records',async()=>{
+ const before=await db.load();
+ const valid='https://music.youtube.com/watch?v=dQw4w9WgXcQ';
+ for(const links of [undefined,null,valid,{},[null],[123],[{}],Array(2),Array(9).fill(valid),
+  ['https://youtube.com.evil.example/watch?v=dQw4w9WgXcQ'],
+  ['javascript:alert(1)'],['https://example.com/watch?v=dQw4w9WgXcQ'],
+  ['https://user:password@youtube.com/watch?v=dQw4w9WgXcQ']]) {
+  await assert.rejects(()=>db.setSetting('musicLinks',links));
+  assert.deepEqual(await db.load(),before);
+ }
+ await assert.rejects(()=>db.setSetting('musicAccount','person@example.com'));
+ assert.deepEqual(await db.load(),before);
+});
+test('legacy v1 backups default music links empty and invalid music import is atomic',async()=>{
+ const backup=await db.exportBackup();
+ const before=await db.load();
+ for(const links of [null,'https://youtu.be/dQw4w9WgXcQ',[false],Array(9).fill('https://youtu.be/dQw4w9WgXcQ'),
+  ['https://music.youtube.com.evil.example/watch?v=dQw4w9WgXcQ']]) {
+  const invalid=structuredClone(backup);invalid.data.musicLinks=links;
+  // Other changes in an invalid import must not replace real local data.
+  invalid.data.workouts=[];invalid.data.bodyWeights=[];invalid.data.theme='light';
+  await assert.rejects(()=>db.importBackup(invalid));
+  assert.deepEqual(await db.load(),before);
+ }
+ const legacy=structuredClone(backup);delete legacy.data.musicLinks;
+ assert.deepEqual(db.validateBackup(legacy).musicLinks,[]);
+ await db.importBackup(legacy);
+ const restored=await db.load();
+ assert.deepEqual(restored.musicLinks,[]);
+ assert.deepEqual(restored.workouts,before.workouts);
+ assert.deepEqual(restored.sessions,before.sessions);
+ assert.deepEqual(restored.bodyWeights,before.bodyWeights);
+ assert.deepEqual(restored.loadHistory,before.loadHistory);
+ assert.equal(restored.theme,before.theme);
+});
