@@ -34,6 +34,15 @@ async function dump(){
   });}finally{db.close();}
 }
 
+async function dumpGuest(){
+  const db=await openDb('peragym-guest-v1');
+  try{return await new Promise((resolve,reject)=>{
+    const tx=db.transaction(['keys','vaults'],'readonly'),out={};
+    for(const name of ['keys','vaults']){const r=tx.objectStore(name).getAll();r.onsuccess=()=>{out[name]=r.result;};}
+    tx.oncomplete=()=>resolve(out);tx.onerror=tx.onabort=()=>reject(tx.error);
+  });}finally{db.close();}
+}
+
 async function changeStored(store,id,fn){
   const db=await openDb();
   try{return await new Promise((resolve,reject)=>{
@@ -233,4 +242,91 @@ test('locking during encryption prevents a completed ciphertext from committing 
   finally{clearTimeout(timeout);}
   account.lock();release();await assert.rejects(()=>write,Error);
   assert.equal(account.getState().unlocked,false);assert.deepEqual(await dump(),before);
+});
+
+test('guest entry persists its own records across locks and new factories without appearing in registered profiles',async t=>{
+  const account=setup(t),guest=await account.enterGuest();
+  assert.deepEqual(guest,{id:'guest-local',name:'Visitante',username:'visitante'});
+  assert.equal(account.getState().guest,true);assert.equal(account.getState().unlocked,true);
+  await account.mutateData(d=>{d.workouts.push({id:'guest-workout',name:'Guest record'});});
+  account.lock();const another=createLocalAccount();assert.equal(another.getState().unlocked,false);
+  await another.enterGuest();assert.equal((await another.readData()).workouts[0].name,'Guest record');
+  assert.deepEqual(await another.listProfiles(),[]);
+  const registered=await register(another,'registered');assert.notEqual(registered.id,'guest-local');
+  assert.equal(another.getState().guest,false);assert.deepEqual((await another.readData()).workouts,[]);
+  assert.deepEqual((await another.listProfiles()).map(p=>p.id),[registered.id]);
+  another.lock();await another.enterGuest();assert.equal((await another.readData()).workouts[0].id,'guest-workout');
+});
+
+test('guest storage keeps a nonextractable AES-256 CryptoKey and authenticated ciphertext rather than plaintext records',async t=>{
+  const account=setup(t);await account.enterGuest();
+  await account.mutateData(d=>{d.workouts.push({id:'guest-private',name:'GUEST-PRIVATE-SENTINEL'});d.bodyWeights.push({id:'guest-weight',value:81.75});});
+  const stored=await dumpGuest();assert.equal(stored.keys.length,1);assert.equal(stored.vaults.length,1);
+  const record=stored.keys[0],vault=stored.vaults[0];
+  assert.equal(record.id,'guest-local');assert.equal(record.key.type,'secret');assert.equal(record.key.extractable,false);
+  assert.equal(record.key.algorithm.name,'AES-GCM');assert.equal(record.key.algorithm.length,256);
+  assert.deepEqual([...record.key.usages].sort(),['decrypt','encrypt']);
+  await assert.rejects(()=>webcrypto.subtle.exportKey('raw',record.key),Error);
+  assert.equal(vault.profileId,'guest-local');assert.equal(vault.version,1);assert.equal(vault.revision,1);
+  assert.equal(Buffer.from(vault.iv,'base64url').byteLength,12);assert.equal(typeof vault.ciphertext,'string');
+  assert.equal(JSON.stringify(stored).includes('GUEST-PRIVATE-SENTINEL'),false);
+  assert.equal('workouts' in vault,false);assert.equal('bodyWeights' in vault,false);assert.equal('passwordEnvelope' in record,false);
+});
+
+test('guest data is copied to a new password profile only after explicit opt-in and its source always remains intact',async t=>{
+  const account=setup(t);await account.enterGuest();
+  await account.mutateData(d=>{d.workouts.push({id:'guest-source',name:'Original visitor record'});d.musicLinks.push({id:'guest-track',label:'Visitor track'});d.theme='dark';});
+  await account.register({name:'Blank profile',username:'blank',password:PASSWORD});
+  assert.deepEqual((await account.readData()).workouts,[]);assert.equal((await account.readData()).theme,'light');
+  account.lock();await account.enterGuest();const original=await account.readData();
+  await account.register({name:'Copied profile',username:'copied',password:SECOND_PASSWORD,copyGuestData:true});
+  const copied=await account.readData();assert.deepEqual(copied.workouts,original.workouts);assert.deepEqual(copied.musicLinks,original.musicLinks);assert.equal(copied.theme,'dark');
+  await account.mutateData(d=>{d.workouts[0].name='Registered-only edit';});
+  account.lock();await account.enterGuest();assert.deepEqual(await account.readData(),original);
+  account.lock();await account.login('copied',SECOND_PASSWORD);assert.equal((await account.readData()).workouts[0].name,'Registered-only edit');
+  account.lock();await account.login('blank',PASSWORD);assert.deepEqual((await account.readData()).workouts,[]);
+});
+
+test('concurrent first guest entry shares one persisted key and guest writes retain the same conflict protection',async t=>{
+  const a=setup(t),b=createLocalAccount();
+  await Promise.all([a.enterGuest(),b.enterGuest()]);
+  const initial=await dumpGuest();assert.equal(initial.keys.length,1);assert.equal(initial.vaults.length,1);
+  await a.mutateData(d=>{d.workouts.push({id:'first-guest-tab'});});
+  await assert.rejects(()=>b.mutateData(d=>{d.workouts.push({id:'stale-guest-tab'});}),error=>error.name==='LocalAccountConflict');
+  await b.readData();
+  const outcomes=await Promise.allSettled([
+    a.mutateData(d=>{d.workouts.push({id:'guest-a'});}),b.mutateData(d=>{d.workouts.push({id:'guest-b'});})
+  ]);
+  assert.equal(outcomes.filter(x=>x.status==='fulfilled').length,1);
+  assert.equal(outcomes.find(x=>x.status==='rejected').reason.name,'LocalAccountConflict');
+  const data=await a.readData();assert.equal(data.workouts.length,2);assert.equal(data.workouts[0].id,'first-guest-tab');
+  assert.ok(['guest-a','guest-b'].includes(data.workouts[1].id));assert.equal((await dumpGuest()).vaults[0].revision,2);
+});
+
+test('guest access never pretends to offer biometric key wrapping or biometric unlock',async t=>{
+  const account=setup(t),key=await wrappingKey();await account.enterGuest();
+  await assert.rejects(()=>account.wrapSessionKey(key),Error);
+  account.lock();
+  const envelope={version:1,profileId:'guest-local',purpose:'biometric-prf',iv:'A'.repeat(16),ciphertext:'A'.repeat(64)};
+  await assert.rejects(()=>account.unlockWithWrappedKey('guest-local',key,envelope),Error);
+  assert.equal(account.getState().unlocked,false);
+  await account.enterGuest();assert.equal(account.getState().guest,true);
+});
+
+test('guest locking cancels both pending mutators and encryption without committing after the lock',async t=>{
+  const account=setup(t);await account.enterGuest();let ran=false;
+  const immediate=account.mutateData(d=>{ran=true;d.workouts.push({id:'after-guest-lock'});});account.lock();
+  await assert.rejects(()=>immediate,Error);assert.equal(ran,false);
+  await account.enterGuest();const before=await dumpGuest();
+  const subtle=webcrypto.subtle,original=Object.getOwnPropertyDescriptor(subtle,'encrypt'),encrypt=subtle.encrypt.bind(subtle);
+  let enteredResolve,release;const entered=new Promise(resolve=>{enteredResolve=resolve;});
+  Object.defineProperty(subtle,'encrypt',{configurable:true,value:(...args)=>{
+    enteredResolve();return new Promise((resolve,reject)=>{release=()=>encrypt(...args).then(resolve,reject);});
+  }});
+  t.after(()=>{if(original)Object.defineProperty(subtle,'encrypt',original);else delete subtle.encrypt;});
+  const write=account.mutateData(d=>{d.workouts.push({id:'encrypted-guest-after-lock'});});let timeout;
+  try{await Promise.race([entered,new Promise((_,reject)=>{timeout=setTimeout(()=>reject(new Error('Guest encryption was not reached')),3000);})]);}
+  finally{clearTimeout(timeout);}
+  account.lock();release();await assert.rejects(()=>write,Error);
+  assert.equal(account.getState().unlocked,false);assert.deepEqual(await dumpGuest(),before);
 });

@@ -30,3 +30,5 @@ Desconectar remove a sessão local do PeraGym e encerra seu uso de tokens. Para 
 - [Permissões do Web Playback SDK](https://developer.spotify.com/documentation/web-playback-sdk/howtos/web-app-player)
 - [Alterações no perfil em fevereiro de 2026](https://developer.spotify.com/documentation/web-api/references/changes/february-2026)
 - [Identificador `account_id`, maio de 2026](https://developer.spotify.com/documentation/web-api/references/changes/may-2026)
+
+O botão de conexão usa uma janela de autorização para manter o PeraGym e seu perfil local abertos. O retorno comunica apenas o código OAuth e seu state para a janela original, que valida origem, janela, PKCE e autorização antes de carregar o player. Se o navegador bloquear a janela ou separar o PWA do navegador, o aplicativo oferece continuação na mesma aba; o perfil com senha pode pedir novo desbloqueio. A reprodução automática depende das permissões do navegador e pode exigir um toque no play.

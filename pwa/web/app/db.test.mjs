@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import {webcrypto} from 'node:crypto';
 import * as db from './db.js';
-import {localAccount} from './local-account.js?v=3.4.0';
+import {localAccount} from './local-account.js?v=3.5.0';
 const require=createRequire(import.meta.url);
 // Run with fake-indexeddb installed in the project, or provide its absolute entry point.
 const fake=require(process.env.PERAGYM_FAKE_IDB||'fake-indexeddb');
@@ -240,4 +240,45 @@ test('a profile change during legacy hashing cancels migration before committing
   releaseResolve(new Uint8Array(32).buffer);await rejected;
   assert.deepEqual(await db.load(),before);assert.deepEqual(await readLegacyFixture(),original);
  }finally{if(descriptor)Object.defineProperty(subtle,'digest',descriptor);else delete subtle.digest;}
+});
+
+test('deleting one completed session updates history totals and backup while preserving every other record',async()=>{
+ await localAccount.register({name:'Histórico A',username:'db-history-delete',password});
+ const saved=await db.saveWorkout(input()),workout=(await db.load()).workouts[0];
+ await db.updateWeight(workout.exercises[0].id,18.75);
+ await db.saveBodyWeight({at:Date.now()-1000,value:72.25,notes:'Peso preservado'});
+ const first=await db.finishWorkout({workoutId:saved.id,duration:120});
+ await db.finishWorkout({workoutId:saved.id,duration:300});
+ await db.setSetting('activeSession',{id:saved.id,startedAt:Date.now(),done:[],pausedAt:Date.now(),elapsedMs:15000});
+ const before=await db.load(),minutesBefore=before.sessions.reduce((sum,session)=>sum+session.duration,0);
+ assert.equal(before.sessions.length,2);assert.deepEqual(await db.deleteSession(first.id),{ok:true});
+ const after=await db.load();assert.deepEqual(after,{...before,sessions:before.sessions.filter(session=>session.id!==first.id)});
+ assert.equal(after.sessions.length,1);assert.equal(after.sessions.reduce((sum,session)=>sum+session.duration,0),minutesBefore-120);
+ const backup=await db.exportBackup();assert.equal(backup.version,1);assert.equal(backup.data.sessions.some(session=>session.id===first.id),false);
+ assert.deepEqual(backup.data.sessions,after.sessions);assert.deepEqual(backup.data.activeSession,before.activeSession);
+});
+
+test('invalid, missing and locked session deletion never writes a new vault revision',async()=>{
+ const before=await db.load(),revision=localAccount.getState().revision;
+ for(const id of [null,undefined,0,123,{},[],true,'',' ','bad/id','x'.repeat(81)]){
+  await assert.rejects(()=>db.deleteSession(id),/inválido/);
+  assert.equal(localAccount.getState().revision,revision);assert.deepEqual(await db.load(),before);
+ }
+ await assert.rejects(()=>db.deleteSession('missing-completed-session'),/não foi encontrado/);
+ assert.equal(localAccount.getState().revision,revision);assert.deepEqual(await db.load(),before);
+ localAccount.lock();await assert.rejects(()=>db.deleteSession(before.sessions[0].id),error=>error.name==='LocalAccountLocked');
+ await localAccount.login('db-history-delete',password);assert.deepEqual(await db.load(),before);assert.equal(localAccount.getState().revision,revision);
+});
+
+test('completed session deletion is isolated by profile even for identical imported session IDs',async()=>{
+ const original=await db.load(),backup=await db.exportBackup(),sharedId=original.sessions[0].id;
+ await localAccount.register({name:'Histórico B',username:'db-history-other',password});await db.importBackup(backup);
+ assert.ok((await db.load()).sessions.some(session=>session.id===sharedId));await db.deleteSession(sharedId);
+ assert.equal((await db.load()).sessions.length,0);
+ const own=await db.finishWorkout({workoutId:original.workouts[0].id,duration:45}),other=await db.load();
+ await localAccount.login('db-history-delete',password);assert.deepEqual(await db.load(),original);
+ const revision=localAccount.getState().revision;
+ await assert.rejects(()=>db.deleteSession(own.id),/não foi encontrado/);
+ assert.deepEqual(await db.load(),original);assert.equal(localAccount.getState().revision,revision);
+ await localAccount.login('db-history-other',password);assert.deepEqual(await db.load(),other);
 });

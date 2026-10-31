@@ -1,11 +1,15 @@
 /** Offline profiles. Personal records are authenticated ciphertext at rest. */
 const DATABASE = 'peragym-accounts-v1';
+const GUEST_DATABASE = 'peragym-guest-v1';
+const GUEST_ID = 'guest-local';
+const GUEST_PROFILE = Object.freeze({id:GUEST_ID,name:'Visitante',username:'visitante'});
 const VERSION = 1;
 const ITERATIONS = 600_000;
 const MAX_DATA_BYTES = 20 * 1024 * 1024;
 const USERNAME = /^[a-z0-9][a-z0-9._-]{2,39}$/;
 const PROFILE_ID = /^[A-Za-z0-9-]{1,80}$/;
 const connections = new WeakMap();
+const guestConnections = new WeakMap();
 const encoder = new TextEncoder();
 const decoder = new TextDecoder('utf-8',{fatal:true});
 
@@ -140,8 +144,23 @@ function openDatabase() {
   });
   connections.set(factory,promise);return promise;
 }
-async function transact(names,mode,action) {
-  const db=await openDatabase();
+function openGuestDatabase() {
+  cryptoAPI();const factory=globalThis.indexedDB;
+  if(guestConnections.has(factory))return guestConnections.get(factory);
+  const promise=new Promise((resolve,reject)=>{
+    const request=factory.open(GUEST_DATABASE,VERSION);let failed=false;
+    request.onupgradeneeded=()=>{request.result.createObjectStore('keys',{keyPath:'id'});request.result.createObjectStore('vaults',{keyPath:'profileId'});};
+    request.onsuccess=()=>{
+      const db=request.result;if(failed){db.close();return;}
+      db.onversionchange=()=>{db.close();guestConnections.delete(factory);};resolve(db);
+    };
+    const stop=()=>{failed=true;guestConnections.delete(factory);reject(failure('Não foi possível abrir os dados de visitante neste navegador.','LocalAccountStorageError'));};
+    request.onerror=stop;request.onblocked=stop;
+  });
+  guestConnections.set(factory,promise);return promise;
+}
+async function transact(names,mode,action,guest=false) {
+  const db=await (guest?openGuestDatabase():openDatabase());
   return new Promise((resolve,reject)=>{
     const transaction=db.transaction(names,mode),stores=Object.fromEntries(names.map(name=>[name,transaction.objectStore(name)]));
     let value,customError;
@@ -158,38 +177,58 @@ async function transact(names,mode,action) {
 async function profileByUsername(username) {
   return transact(['profiles'],'readonly',(stores,done)=>{const request=stores.profiles.index('username').get(username);request.onsuccess=()=>done(request.result||null);});
 }
-async function recordsFor(profileId) {
+async function recordsFor(profileId,guest=false) {
+  if(guest)return transact(['vaults'],'readonly',(stores,done)=>{const request=stores.vaults.get(profileId);request.onsuccess=()=>done({profile:GUEST_PROFILE,vault:request.result||null});},true);
   return transact(['profiles','vaults'],'readonly',(stores,done)=>{
     const result={};let pending=2;
     for(const [store,key]of [['profiles','profile'],['vaults','vault']]){const request=stores[store].get(profileId);request.onsuccess=()=>{result[key]=request.result||null;if(!--pending)done(result);};}
   });
 }
+async function guestRecords() {
+  return transact(['keys','vaults'],'readonly',(stores,done)=>{
+    const result={};let pending=2;
+    for(const [store,key]of [['keys','keyRecord'],['vaults','vault']]){const request=stores[store].get(GUEST_ID);request.onsuccess=()=>{result[key]=request.result||null;if(!--pending)done(result);};}
+  },true);
+}
+function guestKeyFrom(records) {
+  const key=records.keyRecord?.key;
+  if(!records.keyRecord&&!records.vault)return null;
+  if(!key||!records.vault||key.type!=='secret'||key.algorithm?.name!=='AES-GCM'||key.algorithm?.length!==256
+    ||key.extractable!==false||!key.usages?.includes('encrypt')||!key.usages?.includes('decrypt'))throw failure('Os dados de visitante não puderam ser abertos. Nenhum registro foi apagado.','LocalAccountDataError');
+  validateVault(records.vault,GUEST_ID);return key;
+}
 
 export function createLocalAccount({onChange}={}) {
   let session=null,generation=0;
   const listeners=new Set();if(typeof onChange==='function')listeners.add(onChange);
-  function getState() {return {supported:supported(),unlocked:Boolean(session),profileId:session?.profile.id||null,profile:session?publicProfile(session.profile):null,revision:session?.revision??null,generation};}
+  function getState() {return {supported:supported(),unlocked:Boolean(session),guest:Boolean(session?.guest),profileId:session?.profile.id||null,profile:session?publicProfile(session.profile):null,revision:session?.revision??null,generation};}
   function publish() {for(const listener of listeners){try{listener(getState());}catch{}}}
   function subscribe(listener) {if(typeof listener!=='function')throw failure('Observador de sessão inválido.');listeners.add(listener);return()=>listeners.delete(listener);}
   function lock() {generation++;session=null;publish();}
   function assertGeneration(run) {if(run!==generation)throw failure('A sessão local foi encerrada. Entre novamente.','LocalAccountCancelled');}
-  function requireSession() {if(!session)throw failure('Entre no seu perfil local para abrir os registros.','LocalAccountLocked');return {run:generation,profile:session.profile,key:session.key,revision:session.revision};}
+  function requireSession() {if(!session)throw failure('Entre no seu perfil local para abrir os registros.','LocalAccountLocked');return {run:generation,profile:session.profile,key:session.key,revision:session.revision,guest:session.guest};}
   function beginAuthentication() {generation++;session=null;return generation;}
-  function activate(run,profile,key,revision) {assertGeneration(run);session={profile,key,revision};publish();return publicProfile(profile);}
+  function activate(run,profile,key,revision,guest=false) {assertGeneration(run);session={profile,key,revision,guest};publish();return publicProfile(profile);}
   async function listProfiles() {
     const profiles=await transact(['profiles'],'readonly',(stores,done)=>{const request=stores.profiles.getAll();request.onsuccess=()=>done(request.result);});
     return profiles.map(profile=>publicProfile(profile)).sort((a,b)=>a.name.localeCompare(b.name,'pt-BR'));
   }
-  async function register({name,username,password}={}) {
+  async function register({name,username,password,copyGuestData=false}={}) {
     cryptoAPI();name=normalizedName(name);username=normalizeUsername(username);password=checkPassword(password);
+    if(typeof copyGuestData!=='boolean')throw failure('Escolha se deseja copiar os dados de visitante.');
     const run=beginAuthentication(),id=globalThis.crypto.randomUUID();
     const profile={id,version:VERSION,name,username,createdAt:Date.now(),kdf:{name:'PBKDF2',hash:'SHA-256',iterations:ITERATIONS,salt:encode(randomBytes(16))}};
     const existing=await profileByUsername(username);assertGeneration(run);
     if(existing)throw failure('Este nome de usuário já está cadastrado neste aparelho.');
+    let initial=emptyData();
+    if(copyGuestData){
+      const guest=await guestRecords();assertGeneration(run);const key=guestKeyFrom(guest);
+      if(key){initial=await decryptData(GUEST_ID,key,guest.vault);assertGeneration(run);}
+    }
     const key=await cryptoAPI().subtle.generateKey({name:'AES-GCM',length:256},true,['encrypt','decrypt']);assertGeneration(run);
     const wrappingKey=await derivePasswordKey(password,profile.kdf);password=null;assertGeneration(run);
     profile.passwordEnvelope=await wrapDataKey(profile,key,wrappingKey,'password-key');assertGeneration(run);
-    const vault=await encryptData(id,key,emptyData(),0);assertGeneration(run);
+    const vault=await encryptData(id,key,initial,0);assertGeneration(run);
     await transact(['profiles','vaults'],'readwrite',(stores,done)=>{assertGeneration(run);stores.profiles.add(profile);stores.vaults.add(vault);done(null);});
     return activate(run,profile,key,0);
   }
@@ -207,8 +246,35 @@ export function createLocalAccount({onChange}={}) {
     await decryptData(profile.id,key,records.vault);assertGeneration(run);
     return activate(run,profile,key,records.vault.revision);
   }
+  async function enterGuest() {
+    cryptoAPI();const run=beginAuthentication();
+    let records=await guestRecords();assertGeneration(run);
+    let key=guestKeyFrom(records);
+    if(!key){
+      const candidate=await cryptoAPI().subtle.generateKey({name:'AES-GCM',length:256},false,['encrypt','decrypt']);assertGeneration(run);
+      const initial=await encryptData(GUEST_ID,candidate,emptyData(),0);assertGeneration(run);
+      // Concurrent first visits choose one persisted key/vault pair atomically.
+      records=await transact(['keys','vaults'],'readwrite',(stores,done,fail)=>{
+        const current={};let pending=2;
+        for(const [store,name]of [['keys','keyRecord'],['vaults','vault']]){
+          const request=stores[store].get(GUEST_ID);request.onsuccess=()=>{
+            current[name]=request.result||null;if(--pending)return;
+            try{
+              assertGeneration(run);
+              if(guestKeyFrom(current))return done(current);
+              const keyRecord={id:GUEST_ID,key:candidate};stores.keys.add(keyRecord);stores.vaults.add(initial);
+              done({keyRecord,vault:initial});
+            }catch(error){fail(error);}
+          };
+        }
+      },true);
+      assertGeneration(run);key=guestKeyFrom(records);
+    }
+    await decryptData(GUEST_ID,key,records.vault);assertGeneration(run);
+    return activate(run,GUEST_PROFILE,key,records.vault.revision,true);
+  }
   async function readData() {
-    const current=requireSession(),records=await recordsFor(current.profile.id);assertGeneration(current.run);
+    const current=requireSession(),records=await recordsFor(current.profile.id,current.guest);assertGeneration(current.run);
     if(!records.profile)throw failure('Este perfil local não foi encontrado.','LocalAccountDataError');
     const data=await decryptData(current.profile.id,current.key,records.vault);assertGeneration(current.run);
     session.revision=records.vault.revision;
@@ -216,7 +282,7 @@ export function createLocalAccount({onChange}={}) {
   }
   async function mutateData(mutator) {
     if(typeof mutator!=='function')throw failure('A alteração de registros é inválida.');
-    const current=requireSession(),records=await recordsFor(current.profile.id);assertGeneration(current.run);
+    const current=requireSession(),records=await recordsFor(current.profile.id,current.guest);assertGeneration(current.run);
     validateVault(records.vault,current.profile.id);
     if(records.vault.revision!==current.revision)throw failure('Os registros foram alterados em outra aba. Atualize o perfil antes de tentar novamente.','LocalAccountConflict');
     const data=await decryptData(current.profile.id,current.key,records.vault);assertGeneration(current.run);
@@ -235,16 +301,18 @@ export function createLocalAccount({onChange}={}) {
           stores.vaults.put(next);done(null);
         }catch(error){fail(error);}
       };
-    });
+    },current.guest);
     assertGeneration(current.run);session.revision=revision;return result;
   }
   async function wrapSessionKey(wrappingKey) {
     const current=requireSession();
+    if(current.guest)throw failure('O uso sem cadastro não tem senha ou desbloqueio biométrico. Crie um perfil protegido para ativar esse recurso.','LocalAccountAuthError');
     const envelope=await wrapDataKey(current.profile,current.key,wrappingKey,'biometric-prf');
     assertGeneration(current.run);return envelope;
   }
   async function unlockWithWrappedKey(profileId,wrappingKey,envelope) {
     cryptoAPI();if(typeof profileId!=='string'||!PROFILE_ID.test(profileId))throw failure('Escolha um perfil local válido.');
+    if(profileId===GUEST_ID)throw failure('Use a opção sem cadastro para abrir os dados de visitante.','LocalAccountAuthError');
     const run=beginAuthentication(),records=await recordsFor(profileId);assertGeneration(run);
     if(!records.profile)throw failure('Este perfil local não foi encontrado neste aparelho.','LocalAccountAuthError');
     const profile=validateMetadata(records.profile);let key;
@@ -253,7 +321,7 @@ export function createLocalAccount({onChange}={}) {
     assertGeneration(run);await decryptData(profileId,key,records.vault);assertGeneration(run);
     return activate(run,profile,key,records.vault.revision);
   }
-  return {register,login,listProfiles,getState,subscribe,lock,readData,mutateData,wrapSessionKey,unlockWithWrappedKey};
+  return {register,login,enterGuest,listProfiles,getState,subscribe,lock,readData,mutateData,wrapSessionKey,unlockWithWrappedKey};
 }
 
 export const localAccount=createLocalAccount();

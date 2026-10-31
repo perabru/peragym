@@ -1,5 +1,5 @@
-import {makeEmbedUrl,makeSpotifyEmbedUrl} from './music-links.js?v=3.4.0';
-import {createSpotifyPlayback} from './spotify-playback.js?v=3.4.0';
+import {makeEmbedUrl,makeSpotifyEmbedUrl} from './music-links.js?v=3.5.0';
+import {createSpotifyPlayback} from './spotify-playback.js?v=3.5.0';
 
 let youtubePromise;
 function youtubeApi(){
@@ -24,9 +24,9 @@ export function createMusicPlayer(mount,options={}){
   const controls=$('[data-music-controls]'),now=$('[data-music-now]'),name=$('[data-music-provider]');
   let youtube,spotify,media,ready=false,generation=0,stallTimer,tickTimer,modalOpen=false;
   let state={paused:true,position:0,duration:0};
-  const obscured=()=>document.hidden||!!document.querySelector('dialog[open]');
+  const obscured=()=>document.hidden||!!document.querySelector('dialog[open]:not(#operation-loading)');
   const fits=()=>window.innerHeight>=280&&window.innerWidth>=(window.innerHeight<=520?420:240);
-  const setStatus=message=>{status.textContent=message;};
+  const setStatus=(message,busy=false)=>{status.textContent=message;status.classList.toggle('is-loading',busy);};
   function update(next){
     state={...state,...next};
     $('[data-music-toggle]').textContent=state.paused?'▶':'Ⅱ';
@@ -58,6 +58,15 @@ export function createMusicPlayer(mount,options={}){
     update({paused:true,position:0,duration:0});
   }
   function close(){destroy();media=undefined;mount.hidden=true;state={paused:true,position:0,duration:0};source.removeAttribute('href');source.textContent='Abrir no serviço ↗';$('[data-track-title]').textContent='';$('[data-track-artist]').textContent='';const image=$('[data-track-image]');image.removeAttribute('src');image.hidden=true;name.textContent='player';setStatus('');document.body.classList.remove('music-active');}
+  function openAccount(provider,profile){
+    destroy();media=undefined;state={paused:true,position:0,duration:0};
+    mount.hidden=false;document.body.classList.add('music-active');host.hidden=true;now.hidden=false;
+    name.textContent=provider==='spotify'?'Spotify':'YouTube';
+    source.href=provider==='spotify'?'https://open.spotify.com/':'https://music.youtube.com/';
+    source.textContent=provider==='spotify'?'Abrir no Spotify ↗':'Abrir no YouTube Music ↗';
+    $('[data-track-title]').textContent='Conta conectada';$('[data-track-artist]').textContent=profile?.displayName||'Escolha uma música';
+    setStatus('Carregando suas playlists…',true);
+  }
   function pause(){
     if(!media)return;
     if(!ready){close();return;}
@@ -85,7 +94,7 @@ export function createMusicPlayer(mount,options={}){
     $('[data-track-title]').textContent='Preparando player...';$('[data-track-artist]').textContent='PeraGym';
     const account=options.account?.();
     if(next.provider==='spotify'&&account?.getState().connected){
-      host.hidden=true;now.hidden=false;setStatus('Conectando ao player do PeraGym...');
+      host.hidden=true;now.hidden=false;setStatus('Conectando ao player do PeraGym...',true);
       spotify=createSpotifyPlayback({account,onState:value=>{
         if(current!==generation)return;
         ready=!!value.ready;transport(ready,true);update(value);
@@ -106,7 +115,7 @@ export function createMusicPlayer(mount,options={}){
       setStatus('Player oficial Spotify. A disponibilidade depende do serviço e da sua conta.');
       return;
     }
-    setStatus('Toque no play do YouTube para ouvir.');
+    setStatus('Carregando player do YouTube…',true);
     const frame=iframe(makeEmbedUrl(next,location.origin),'Player oficial do YouTube','youtube');
     try{
       const YT=await youtubeApi();if(current!==generation||!frame.isConnected)return;
@@ -115,6 +124,7 @@ export function createMusicPlayer(mount,options={}){
         onReady:()=>{
           if(current!==generation)return;ready=true;transport(true,next.kind==='playlist');
           if(obscured()){pause();return;}
+          setStatus('Toque no play do YouTube para ouvir.');
           tickTimer=setInterval(()=>{
             if(current!==generation||!ready)return;
             try{update({position:youtube.getCurrentTime()*1000,duration:youtube.getDuration()*1000,paused:youtube.getPlayerState()!==1});}catch(_){}
@@ -126,7 +136,7 @@ export function createMusicPlayer(mount,options={}){
           update({paused:event.data!==1});
           if(event.data===3)stallTimer=setTimeout(()=>{if(current===generation)setStatus('O YouTube está demorando. Você pode abrir pelo link abaixo.');},12000);
           const messages={1:'Reproduzindo no YouTube.',2:'Pausado.',0:'Reprodução encerrada.',3:'Carregando música...'};
-          if(messages[event.data])setStatus(messages[event.data]);
+          if(messages[event.data])setStatus(messages[event.data],event.data===3);
         },
         onError:event=>{
           if(current!==generation)return;clearTimeout(stallTimer);
@@ -156,6 +166,6 @@ export function createMusicPlayer(mount,options={}){
   $('[data-music-close]').onclick=close;
   window.addEventListener('resize',()=>{if(media&&!fits())close();});
   document.addEventListener('visibilitychange',()=>{if(document.hidden)pause();});
-  new MutationObserver(()=>{const open=!!document.querySelector('dialog[open]');const justOpened=open&&!modalOpen;modalOpen=open;if(justOpened)pause();}).observe(document.body,{subtree:true,childList:true,attributes:true,attributeFilter:['open']});
-  return {load,close};
+  new MutationObserver(()=>{const open=!!document.querySelector('dialog[open]:not(#operation-loading)');const justOpened=open&&!modalOpen;modalOpen=open;if(justOpened)pause();}).observe(document.body,{subtree:true,childList:true,attributes:true,attributeFilter:['open']});
+  return {load,openAccount,setMessage:setStatus,close};
 }

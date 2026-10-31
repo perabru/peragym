@@ -3,6 +3,7 @@
 // Independent of the module graph: a failed app import must not leave a spinner
 // covering the recovery actions. No database or cache is changed here.
 (() => {
+  if(window.__peragymSpotifyReturn)return;
   window.__peragymBootManaged = true;
   const started = Date.now();
   const MINIMUM_LOADING = 850;
@@ -65,7 +66,7 @@
   window.addEventListener('error', event => {
     if (ready || visible) return;
     const resource = event.target?.src || event.filename || '';
-    if (/(?:^|\/)app\/(?:app|db|charts|music-links|music-player|local-account|local-auth-ui|local-biometric|youtube-account|spotify-account|spotify-playback)\.js(?:[?#]|$)/.test(resource)) fail();
+    if (/(?:^|\/)app\/(?:app|db|charts|music-links|music-player|local-account|local-auth-ui|local-biometric|youtube-account|spotify-account|spotify-playback|spotify-return|workout-session|operation-loading)\.js(?:[?#]|$)/.test(resource)) fail();
   }, true);
   window.addEventListener('unhandledrejection', () => { if (!ready && !visible) fail(); });
   document.addEventListener('readystatechange', () => { if (document.readyState !== 'loading') mount(); });

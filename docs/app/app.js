@@ -1,12 +1,14 @@
-import * as store from './db.js?v=3.4.0';
-import {parseMusicLink} from './music-links.js?v=3.4.0';
-import {localAccount} from './local-account.js?v=3.4.0';
-import {createLocalBiometric} from './local-biometric.js?v=3.4.0';
-import {createLocalAuthUI} from './local-auth-ui.js?v=3.4.0';
-import {createYouTubeAccount} from './youtube-account.js?v=3.4.0';
-import {createSpotifyAccount} from './spotify-account.js?v=3.4.0';
-import {createMusicPlayer} from './music-player.js?v=3.4.0';
-import {renderChart,filterRange,summarize} from './charts.js?v=3.4.0';
+import {createOperationLoading} from './operation-loading.js?v=3.5.0';
+import {createSession,normalizeSession,elapsedSeconds,pauseSession,resumeSession,restartSession} from './workout-session.js?v=3.5.0';
+import * as store from './db.js?v=3.5.0';
+import {parseMusicLink} from './music-links.js?v=3.5.0';
+import {localAccount} from './local-account.js?v=3.5.0';
+import {createLocalBiometric} from './local-biometric.js?v=3.5.0';
+import {createLocalAuthUI} from './local-auth-ui.js?v=3.5.0';
+import {createYouTubeAccount} from './youtube-account.js?v=3.5.0';
+import {createSpotifyAccount} from './spotify-account.js?v=3.5.0';
+import {createMusicPlayer} from './music-player.js?v=3.5.0';
+import {renderChart,filterRange,summarize} from './charts.js?v=3.5.0';
 'use strict';
 const cassette = () => '<img src="/peragym/docs/assets/cassette.svg" class="cassette-icon" alt="" aria-hidden="true">';
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -26,6 +28,11 @@ const icon = (name, className = '') => `<svg class="${className}" viewBox="0 0 2
   leaf:'<path d="M20 3C8 2 1 10 5 17s17 3 15-14ZM4 21 15 10"/>'
 })[name] || ''}</svg>`;
 
+const operationLoading=createOperationLoading();
+const loadingMessages={load:'Abrindo seus registros…',saveWorkout:'Salvando ficha…',deleteWorkout:'Excluindo ficha…',deleteSession:'Excluindo treino do histórico…',updateWeight:'Salvando carga…',finishWorkout:'Registrando treino…',setSetting:'Salvando no aparelho…',saveBodyWeight:'Salvando peso…',deleteBodyWeight:'Excluindo registro…',exportBackup:'Preparando backup…',importBackup:'Importando backup…',migrateLegacy:'Copiando seus treinos…'};
+const db=Object.fromEntries(Object.entries(store).map(([name,value])=>[name,loadingMessages[name]?(...args)=>operationLoading.run(loadingMessages[name],()=>value(...args)):value]));
+let authBusyRelease=null;
+function authBusy(message){authBusyRelease?.();authBusyRelease=message?operationLoading.start(message):null;}
 let data = {workouts:[],sessions:[],loadHistory:[],bodyWeights:[],musicLinks:[],theme:'light'};
 const musicPlayer = createMusicPlayer($('#music-deck'),{account:()=>spotifyAccount});
 let page = 'inicio', selectedId = null, editingId = 0, active = null, restUntil = 0;
@@ -34,7 +41,7 @@ let chartExerciseId='', chartRange='90', submitting=false, handling=false;
 let spotifyAccount=null, youtubeAccount=null, musicConfigLoaded=false, spotifyPlaylists=[], youtubePlaylists=[], youtubeTracks=[], musicBusy=false, youtubeBusy=false, playlistRequest=0, youtubeRequest=0, musicGeneration=0;
 let legacyStatus=null, youtubePreparing=false;
 const localBiometric=createLocalBiometric({account:localAccount});
-const authUI=createLocalAuthUI({mount:$('#main'),account:localAccount,biometric:localBiometric,onUnlock:unlockApp,onLock:lockApp,onRefresh:async()=>{await refresh();render();}});
+const authUI=createLocalAuthUI({mount:$('#main'),account:localAccount,biometric:localBiometric,onUnlock:unlockApp,onLock:lockApp,onBusy:authBusy,onRefresh:async()=>{await refresh();render();}});
 let returningFromSpotify=new URLSearchParams(location.search).has('state') && (new URLSearchParams(location.search).has('code')||new URLSearchParams(location.search).has('error'));
 if(returningFromSpotify)page='musica';
 const formatKg = n => Number(n).toLocaleString('pt-BR',{maximumFractionDigits:2});
@@ -42,12 +49,12 @@ const timeText = seconds => `${Math.floor(seconds/60).toString().padStart(2,'0')
 const workout = id => data.workouts.find(w=>w.id===id);
 
 async function call(method, ...args) {
-  if(method==='load')return store.load();
-  if(method==='saveWorkout')return store.saveWorkout(JSON.parse(args[0]));
-  if(method==='deleteWorkout')return store.deleteWorkout(args[0]);
-  if(method==='updateWeight')return store.updateWeight(args[0],args[1]);
-  if(method==='finishWorkout')return store.finishWorkout(JSON.parse(args[0]));
-  if(method==='setTheme')return store.setSetting('theme',args[0]);
+  if(method==='load')return db.load();
+  if(method==='saveWorkout')return db.saveWorkout(JSON.parse(args[0]));
+  if(method==='deleteWorkout')return db.deleteWorkout(args[0]);
+  if(method==='updateWeight')return db.updateWeight(args[0],args[1]);
+  if(method==='finishWorkout')return db.finishWorkout(JSON.parse(args[0]));
+  if(method==='setTheme')return db.setSetting('theme',args[0]);
   throw new Error('Operação indisponível.');
 }
 async function refresh() {
@@ -88,9 +95,10 @@ function render() {
   $('#settings-open').disabled=!localAccount.getState().unlocked;
   if(!localAccount.getState().unlocked){authUI.render();return;}
   $$('.nav-item').forEach(b=>{b.classList.toggle('active',b.dataset.page===page);if(b.dataset.page===page)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');});
-  $('#main').innerHTML=selectedId?detailView():page==='fichas'?listView():page==='historico'?historyView():page==='evolucao'?evolutionView():page==='ajustes'?settingsView():page==='musica'?musicView():homeView();
+  const view=selectedId?detailView():page==='fichas'?listView():page==='historico'?historyView():page==='evolucao'?evolutionView():page==='ajustes'?settingsView():page==='musica'?musicView():homeView();
+  $('#main').innerHTML=(active&&selectedId!==active.id?ongoingView():'')+view;
   bindPage();
-  if(active){updateSessionTimer();timerHandle=setInterval(updateSessionTimer,1000);}
+  if(active){updateSessionTimer();if(active.pausedAt===null)timerHandle=setInterval(updateSessionTimer,1000);}
 }
 function intro(eyebrow,title,subtitle,button='') {
   return `<div class="page-intro"><div><span class="eyebrow">${eyebrow}</span><h1>${title}</h1><p class="subtext">${subtitle}</p></div>${button}</div>`;
@@ -105,19 +113,26 @@ function weekView(){
   }).join('')}</div>`;
 }
 function emptyView(history=false){return `<div class="empty"><div class="empty-symbol">${icon(history?'history':'gym')}</div><h3>${history?'Nenhum treino concluído':'Nenhuma ficha criada'}</h3><p>${history?'Os treinos concluídos aparecerão aqui.':'Adicione os exercícios, séries e cargas.'}</p><button class="button primary" data-action="${history?'go-fichas':'create'}">${history?'Ver minhas fichas':'Criar ficha'} ${icon('arrow')}</button>${history?'':'<button class="text-button" data-action="template">Usar modelo em branco</button>'}</div>`;}
-function card(w,index){return `<article class="workout-card"><div class="workout-card-top"><div class="workout-letter">${String.fromCharCode(65+(index%26))}</div><div class="workout-info"><h3>${escapeHtml(w.name)}</h3><p class="workout-focus">${escapeHtml(w.focus||'Ficha de treino')}</p></div><button class="icon-button" data-action="edit" data-id="${w.id}" aria-label="Editar ${escapeHtml(w.name)}">${icon('edit')}</button></div><div class="card-meta"><span>${icon('gym')}${w.exercises.length} exercício${w.exercises.length!==1?'s':''}</span>${w.days?`<span>${icon('calendar')}${escapeHtml(w.days)}</span>`:''}</div><div class="card-bottom"><button class="text-button" data-action="open" data-id="${w.id}">Ver ficha ${icon('arrow')}</button><button class="button primary" data-action="start" data-id="${w.id}">${active&&active.id===w.id?'Continuar treino':'Começar treino'}</button></div></article>`;}
+function card(w,index){return `<article class="workout-card"><div class="workout-card-top"><div class="workout-letter">${String.fromCharCode(65+(index%26))}</div><div class="workout-info"><h3>${escapeHtml(w.name)}</h3><p class="workout-focus">${escapeHtml(w.focus||'Ficha de treino')}</p></div><button class="icon-button" data-action="edit" data-id="${w.id}" aria-label="Editar ${escapeHtml(w.name)}">${icon('edit')}</button></div><div class="card-meta"><span>${icon('gym')}${w.exercises.length} exercício${w.exercises.length!==1?'s':''}</span>${w.days?`<span>${icon('calendar')}${escapeHtml(w.days)}</span>`:''}</div><div class="card-bottom"><button class="text-button" data-action="open" data-id="${w.id}">Ver ficha ${icon('arrow')}</button><button class="button primary" data-action="start" data-id="${w.id}">${active&&active.id===w.id?(active.pausedAt!==null?'Retomar treino':'Continuar treino'):'Começar treino'}</button></div></article>`;}
 function homeView(){
   const date=new Date().toLocaleDateString('pt-BR',{weekday:'long',day:'numeric',month:'long'});
   return intro(date,'Treinos','',data.workouts.length?'<button class="button primary" data-action="create">+ Nova ficha</button>':'')+
     `<div class="home-simple">${statsView()}<section><div class="section-heading"><h2>Minhas fichas</h2>${data.workouts.length?'<button class="text-button" data-action="go-fichas">Ver todas</button>':''}</div><div class="workout-list">${data.workouts.length?data.workouts.slice(0,3).map(card).join(''):emptyView()}</div></section><div class="home-utilities"><section class="week-summary"><h3>Esta semana</h3>${weekView()}</section><button class="music-shortcut" data-action="go-music"><span aria-hidden="true">♫</span><div><strong>Música</strong><small>Abrir player</small></div>${icon('arrow')}</button></div></div>`;
 }
 function listView(){return intro('TREINOS','Minhas fichas','Exercícios, séries e cargas.','<button class="button primary add-top" data-action="create" aria-label="Criar nova ficha">+ Nova</button>')+(data.workouts.length?`<label class="search">${icon('search')}<input id="search" type="search" placeholder="Buscar ficha ou grupo muscular" aria-label="Buscar ficha ou grupo muscular"></label><div id="workout-results" class="workout-list all">${data.workouts.map(card).join('')}</div>`:emptyView());}
+function ongoingView(){
+  return `<aside class="ongoing-workout" aria-label="Treino em andamento"><div><span class="eyebrow">${active.pausedAt!==null?'TREINO PAUSADO':'EM ANDAMENTO'}</span><strong>${escapeHtml(workout(active.id)?.name||'Seu treino')} · <span id="session-time">${timeText(elapsedSeconds(active))}</span></strong></div><button class="button secondary" data-action="session-open">Abrir treino ${icon('arrow')}</button></aside>`;
+}
+function sessionControls(){
+  const paused=active.pausedAt!==null;
+  return `<section class="session-bar ${paused?'session-paused':''}" aria-label="Controles do treino"><div class="session-summary"><div><span>${paused?'TREINO PAUSADO':'TREINO EM ANDAMENTO'}</span><strong id="session-time" aria-label="Tempo de treino">${timeText(elapsedSeconds(active))}</strong></div><span class="session-progress">${active.done.length} / ${workout(active.id)?.exercises.length||0} exercícios</span></div><div class="session-buttons"><button class="button secondary" data-action="${paused?'session-resume':'session-pause'}">${paused?'▶ Continuar treino':'Ⅱ Pausar treino'}</button><button class="button primary" data-action="finish">Concluir treino ${cassette()}</button><button class="button secondary" data-action="session-restart">↻ Reiniciar</button><button class="button secondary session-cancel" data-action="session-cancel">Cancelar treino</button></div></section>`;
+}
 function detailView(){
   const w=workout(selectedId);if(!w){selectedId=null;return listView();}
   const running=active&&active.id===w.id;
-  return `<div class="detail-layout"><div class="page-title-row"><button class="icon-button" data-action="back" aria-label="Voltar">${icon('back')}</button><span class="eyebrow">SUA FICHA DE TREINO</span></div><section class="detail-hero"><span class="eyebrow">${escapeHtml(w.days||'FICHA DE TREINO')}</span><h1>${escapeHtml(w.name)}</h1><p class="subtext">${escapeHtml(w.focus||'Exercícios da ficha')}</p></section>${running?'<div class="session-bar"><div><span>TREINO EM ANDAMENTO</span><strong id="session-time">00:00</strong></div><button data-action="finish">Concluir treino <img src="/peragym/docs/assets/cassette.svg" class="cassette-icon" alt="" aria-hidden="true"></button></div>':`<div class="detail-actions"><button class="button primary" data-action="start" data-id="${w.id}">Começar treino ${icon('arrow')}</button><button class="button secondary" data-action="edit" data-id="${w.id}" aria-label="Editar ficha">${icon('edit')}</button><button class="icon-button" data-action="delete" data-id="${w.id}" aria-label="Excluir ficha">${icon('trash')}</button></div>`}<div class="section-heading"><h3>${w.exercises.length} exercício${w.exercises.length===1?'':'s'}</h3><span class="small-label">Carga em kg</span></div>${w.exercises.map((e,i)=>`<article class="exercise-card"><div class="exercise-heading"><span class="exercise-index">${(i+1).toString().padStart(2,'0')}</span><h3>${escapeHtml(e.name)}</h3></div><div class="exercise-prescription"><span>${e.sets} séries</span><span>${escapeHtml(e.reps)} repetições</span><span>${e.rest}s de descanso</span></div><div class="weight-control"><span class="small-label">Carga atual</span><div class="weight-stepper"><button data-action="weight-minus" data-id="${e.id}" aria-label="Diminuir carga de ${escapeHtml(e.name)} em 1 kg" ${Number(e.weight)<=0?'disabled':''}>−</button><button class="weight-value" data-action="weight-edit" data-id="${e.id}" aria-label="Editar carga de ${escapeHtml(e.name)}">${formatKg(e.weight)} <small>kg</small></button><button data-action="weight-plus" data-id="${e.id}" aria-label="Aumentar carga de ${escapeHtml(e.name)} em 1 kg" ${Number(e.weight)>=2000?'disabled':''}>+</button></div></div>${e.notes?`<p class="exercise-note">${escapeHtml(e.notes)}</p>`:''}${running?`<button class="done-exercise ${active.done.includes(e.id)?'checked':''}" data-action="check-exercise" data-id="${e.id}" aria-pressed="${active.done.includes(e.id)}">${icon('check')}${active.done.includes(e.id)?'Exercício concluído':'Marcar exercício como concluído'}</button>${e.rest?`<button class="rest-button" data-action="rest" data-seconds="${e.rest}">${icon('clock')} Iniciar descanso de ${e.rest}s</button>`:''}`:''}</article>`).join('')}${w.notes?`<div class="note-box"><strong>Suas observações</strong><br>${escapeHtml(w.notes)}</div>`:''}<p class="footer-note">Toque na carga para editar. Cada ajuste é salvo no aparelho.</p></div>`;
+  return `<div class="detail-layout"><div class="page-title-row"><button class="icon-button" data-action="back" aria-label="Voltar">${icon('back')}</button><span class="eyebrow">SUA FICHA DE TREINO</span></div><section class="detail-hero"><span class="eyebrow">${escapeHtml(w.days||'FICHA DE TREINO')}</span><h1>${escapeHtml(w.name)}</h1><p class="subtext">${escapeHtml(w.focus||'Exercícios da ficha')}</p></section>${running?sessionControls():`<div class="detail-actions"><button class="button primary" data-action="start" data-id="${w.id}">Começar treino ${icon('arrow')}</button><button class="button secondary" data-action="edit" data-id="${w.id}" aria-label="Editar ficha">${icon('edit')}</button><button class="icon-button" data-action="delete" data-id="${w.id}" aria-label="Excluir ficha">${icon('trash')}</button></div>`}<div class="section-heading"><h3>${w.exercises.length} exercício${w.exercises.length===1?'':'s'}</h3><span class="small-label">Carga em kg</span></div>${w.exercises.map((e,i)=>`<article class="exercise-card"><div class="exercise-heading"><span class="exercise-index">${(i+1).toString().padStart(2,'0')}</span><h3>${escapeHtml(e.name)}</h3></div><div class="exercise-prescription"><span>${e.sets} séries</span><span>${escapeHtml(e.reps)} repetições</span><span>${e.rest}s de descanso</span></div><div class="weight-control"><span class="small-label">Carga atual</span><div class="weight-stepper"><button data-action="weight-minus" data-id="${e.id}" aria-label="Diminuir carga de ${escapeHtml(e.name)} em 1 kg" ${Number(e.weight)<=0?'disabled':''}>−</button><button class="weight-value" data-action="weight-edit" data-id="${e.id}" aria-label="Editar carga de ${escapeHtml(e.name)}">${formatKg(e.weight)} <small>kg</small></button><button data-action="weight-plus" data-id="${e.id}" aria-label="Aumentar carga de ${escapeHtml(e.name)} em 1 kg" ${Number(e.weight)>=2000?'disabled':''}>+</button></div></div>${e.notes?`<p class="exercise-note">${escapeHtml(e.notes)}</p>`:''}${running?`<button class="done-exercise ${active.done.includes(e.id)?'checked':''}" data-action="check-exercise" data-id="${e.id}" aria-pressed="${active.done.includes(e.id)}" ${active.pausedAt!==null?'disabled':''}>${icon('check')}${active.done.includes(e.id)?'Exercício concluído':'Marcar exercício como concluído'}</button>${e.rest?`<button class="rest-button" data-action="rest" data-seconds="${e.rest}" ${active.pausedAt!==null?'disabled':''}>${icon('clock')} Iniciar descanso de ${e.rest}s</button>`:''}`:''}</article>`).join('')}${w.notes?`<div class="note-box"><strong>Suas observações</strong><br>${escapeHtml(w.notes)}</div>`:''}<p class="footer-note">Toque na carga para editar. Cada ajuste é salvo no aparelho.</p></div>`;
 }
-function historyView(){return intro('TREINOS CONCLUÍDOS','Histórico','Datas e duração dos treinos.')+statsView()+(data.sessions.length?`<div class="section-heading"><h2>Treinos concluídos</h2><span class="small-label">Mais recentes</span></div>${data.sessions.map(s=>`<article class="history-item"><span class="history-tick">✓</span><div class="history-info"><h3>${escapeHtml(s.workoutName)}</h3><p>${new Date(s.completedAt).toLocaleDateString('pt-BR',{day:'2-digit',month:'long',year:'numeric'})} · ${new Date(s.completedAt).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}</p></div><div class="history-duration">${Math.floor(s.duration/60)} min<small>${s.duration%60} s</small></div></article>`).join('')}`:emptyView(true));}
+function historyView(){return intro('TREINOS CONCLUÍDOS','Histórico','Datas e duração dos treinos.')+statsView()+(data.sessions.length?`<div class="section-heading"><h2>Treinos concluídos</h2><span class="small-label">Mais recentes</span></div>${data.sessions.map(s=>`<article class="history-item"><span class="history-tick">✓</span><div class="history-info"><h3>${escapeHtml(s.workoutName)}</h3><p>${new Date(s.completedAt).toLocaleDateString('pt-BR',{day:'2-digit',month:'long',year:'numeric'})} · ${new Date(s.completedAt).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}</p></div><div class="history-duration">${Math.floor(s.duration/60)} min<small>${s.duration%60} s</small></div><button class="text-button history-remove" data-action="history-delete" data-id="${s.id}" aria-label="Excluir treino ${escapeHtml(s.workoutName)} de ${new Date(s.completedAt).toLocaleDateString('pt-BR')}">${icon('trash')} Excluir</button></article>`).join('')}`:emptyView(true));}
 
 function signedKg(value){return `${value>0?'+':''}${formatKg(value)} kg`;}
 function seriesSummary(points,label){
@@ -156,8 +171,8 @@ function musicView(){
   const links=(data.musicLinks||[]).map(url=>{try{return parseMusicLink(url);}catch(_){return null;}}).filter(Boolean);
   const spotify=spotifyAccount?.getState()||{configured:false,connected:false};
   const youtube=youtubeAccount?.getState()||{configured:false,connected:false,ready:false};
-  const spotifyConnect=spotify.connected?`<div class="account-connected"><i class="status-dot"></i><strong>${escapeHtml(spotify.profile?.displayName||'Conta Spotify')}</strong><button class="text-button" data-action="spotify-disconnect">Sair</button></div><button class="button secondary full" data-action="spotify-library" ${musicBusy?'disabled':''}>${musicBusy?'Carregando...':'Minhas playlists'}</button>`:spotify.configured?`<button class="button spotify-connect full" data-action="spotify-connect">Conectar Spotify</button><p class="form-hint">Login oficial. Reprodução completa exige Premium.</p>`:`<a class="button secondary full" href="https://open.spotify.com/" target="_blank" rel="noopener">Abrir Spotify ↗</a><p class="form-hint">Conexão de contas aguardando ativação. Você já pode usar links.</p>`;
-  const youtubeConnect=youtube.connected?`<div class="account-connected"><i class="status-dot"></i><strong>${escapeHtml(youtube.profile?.displayName||'Conta YouTube')}</strong><button class="text-button" data-action="youtube-disconnect">Sair</button></div><button class="button secondary full" data-action="youtube-library" ${youtubeBusy?'disabled':''}>${youtubeBusy?'Carregando...':'Minhas playlists'}</button>`:youtube.configured?`<button class="button secondary full" data-action="${youtube.ready?'youtube-connect':'youtube-prepare'}" ${!youtube.ready&&!youtube.error?'disabled':''}>${youtube.ready?'Conectar com Google':youtube.error?'Preparar login Google':'Preparando login...'}</button><p class="form-hint">Autorize a leitura das playlists do YouTube.</p>`:`<a class="button secondary full" href="https://music.youtube.com/" target="_blank" rel="noopener">Abrir YouTube Music ↗</a><p class="form-hint">Conexão Google aguardando ativação. Você já pode usar links.</p>`;
+  const spotifyConnect=spotify.connected?`<div class="account-connected"><i class="status-dot"></i><strong>${escapeHtml(spotify.profile?.displayName||'Conta Spotify')}</strong><button class="text-button" data-action="spotify-disconnect">Sair</button></div><button class="button secondary full" data-action="spotify-library" ${musicBusy?'disabled':''}>${musicBusy?'Carregando...':'Minhas playlists'}</button>`:spotify.configured?`<button class="button spotify-connect full" data-action="spotify-connect">Conectar Spotify</button><p class="form-hint">Login oficial. Reprodução completa exige Premium.</p>`:`<button class="button secondary full" disabled>Conectar Spotify</button><p class="form-hint">Conexão de contas aguardando ativação. Para ouvir agora, cole um link acima.</p>`;
+  const youtubeConnect=youtube.connected?`<div class="account-connected"><i class="status-dot"></i><strong>${escapeHtml(youtube.profile?.displayName||'Conta YouTube')}</strong><button class="text-button" data-action="youtube-disconnect">Sair</button></div><button class="button secondary full" data-action="youtube-library" ${youtubeBusy?'disabled':''}>${youtubeBusy?'Carregando...':'Minhas playlists'}</button>`:youtube.configured?`<button class="button secondary full" data-action="${youtube.ready?'youtube-connect':'youtube-prepare'}" ${!youtube.ready&&!youtube.error?'disabled':''}>${youtube.ready?'Conectar com Google':youtube.error?'Preparar login Google':'Preparando login...'}</button><p class="form-hint">Autorize a leitura das playlists do YouTube.</p>`:`<button class="button secondary full" disabled>Conectar com Google</button><p class="form-hint">Conexão Google aguardando ativação. Para ouvir agora, cole um link acima.</p>`;
   return intro('','Música','Escolha a conta ou cole um link.')+
     `<div class="music-simple"><section class="setting-card music-input-card"><form id="music-form"><label>Link da música ou playlist<input id="music-link" type="url" inputmode="url" required maxlength="2048" placeholder="YouTube Music ou Spotify" autocomplete="off" spellcheck="false"></label><button type="submit" class="button primary full">Abrir no player ▶</button></form><p class="form-hint">Música exige internet.</p></section>
     <div class="music-accounts"><section class="account-card"><h2>Spotify</h2>${musicConfigLoaded?spotifyConnect:'<p class="form-hint">Carregando conexão...</p>'}${spotify.error&&spotify.configured?`<p class="form-hint" role="status">${escapeHtml(spotify.error)}</p>`:''}</section><section class="account-card"><h2>YouTube / Music</h2>${musicConfigLoaded?youtubeConnect:'<p class="form-hint">Carregando conexão...</p>'}${youtube.error&&youtube.configured?`<p class="form-hint" role="status">${escapeHtml(youtube.error)}</p>`:''}</section></div>
@@ -172,7 +187,7 @@ async function playMusic(raw){
   const urls=[item.url,...(data.musicLinks||[]).filter(url=>url!==item.url)].slice(0,8);
   data.musicLinks=urls;
   void musicPlayer.load(item).catch(error=>notify(error.message));
-  try{await store.setSetting('musicLinks',urls);}catch(_){notify('Não foi possível salvar o link nos recentes.');}
+  try{await db.setSetting('musicLinks',urls);}catch(_){notify('Não foi possível salvar o link nos recentes.');}
   if(page==='musica')render();
 }
 function musicAccountChanged(){
@@ -202,25 +217,43 @@ async function initializeMusic(){
     if(owner&&owner!==localAccount.getState().profile.id){notify('Entre no perfil que iniciou a conexão com o Spotify.');}
     else{
       page='musica';selectedId=null;render();
-      try{const result=await spotifyAccount.completeRedirect();if(generation!==musicGeneration)return;try{sessionStorage.removeItem('peragym:spotify-profile');}catch(_){}if(result.error)notify(result.error);else if(result.connected){notify('Spotify conectado.');void loadSpotifyPlaylists();}returningFromSpotify=false;}catch(error){notify(error.message);}
+      try{const result=await spotifyAccount.completeRedirect();if(generation!==musicGeneration)return;try{sessionStorage.removeItem('peragym:spotify-profile');}catch(_){}if(result.error)notify(result.error);else if(result.connected){notify('Spotify conectado.');void activateMusic('spotify');}returningFromSpotify=false;}catch(error){notify(error.message);}
     }
   }
   if(page==='musica'&&localAccount.getState().unlocked){render();void prepareYouTube();}
 }
+async function activateMusic(provider){
+  const account=provider==='spotify'?spotifyAccount:youtubeAccount;
+  const session=localAccount.getState();
+  if(!session.unlocked||!account?.getState().connected)return;
+  const current=()=>localAccount.getState().unlocked&&localAccount.getState().generation===session.generation&&(provider==='spotify'?spotifyAccount:youtubeAccount)===account&&account.getState().connected;
+  page='musica';selectedId=null;render();musicPlayer.openAccount(provider,account.getState().profile);window.scrollTo(0,0);
+  if(provider==='spotify')await loadSpotifyPlaylists();else await loadYouTubePlaylists();
+  if(!current())return;
+  const recent=(data.musicLinks||[]).find(url=>{try{return parseMusicLink(url).provider===provider;}catch(_){return false;}});
+  if(recent){await playMusic(recent);return;}
+  const playlists=provider==='spotify'?spotifyPlaylists:youtubePlaylists;
+  if(playlists.length){
+    if(provider==='spotify'||playlists[0].privacyStatus!=='private'){await playMusic(playlists[0].url);return;}
+    await loadYouTubeTracks(0);if(!current())return;
+    const track=youtubeTracks.find(item=>item.privacyStatus!=='private');if(track){await playMusic(track.url);return;}
+  }
+  musicPlayer.setMessage('Conta conectada. Cole um link ou escolha uma música para ouvir.');
+}
 async function loadSpotifyPlaylists(){
   if(musicBusy||!spotifyAccount?.getState().connected)return;
   musicBusy=true;const request=++playlistRequest;render();
-  try{const rows=await spotifyAccount.getPlaylists();if(request===playlistRequest){spotifyPlaylists=rows;if(!rows.length)notify('Nenhuma playlist disponível nesta conta.');}}catch(error){if(request===playlistRequest&&page==='musica')notify(error.message);}finally{if(request===playlistRequest){musicBusy=false;if(page==='musica')render();}}
+  try{const rows=await operationLoading.run('Carregando playlists do Spotify…',()=>spotifyAccount.getPlaylists());if(request===playlistRequest){spotifyPlaylists=rows;if(!rows.length)notify('Nenhuma playlist disponível nesta conta.');}}catch(error){if(request===playlistRequest&&page==='musica')notify(error.message);}finally{if(request===playlistRequest){musicBusy=false;if(page==='musica')render();}}
 }
 async function loadYouTubePlaylists(){
   if(youtubeBusy||!youtubeAccount?.getState().connected)return;
   youtubeBusy=true;const request=++youtubeRequest;render();
-  try{const rows=await youtubeAccount.getPlaylists();if(request===youtubeRequest){youtubePlaylists=rows;youtubeTracks=[];if(!rows.length)notify('Nenhuma playlist disponível pela API do YouTube.');}}catch(error){if(request===youtubeRequest)notify(error.message);}finally{if(request===youtubeRequest){youtubeBusy=false;if(page==='musica')render();}}
+  try{const rows=await operationLoading.run('Carregando playlists do YouTube…',()=>youtubeAccount.getPlaylists());if(request===youtubeRequest){youtubePlaylists=rows;youtubeTracks=[];if(!rows.length)notify('Nenhuma playlist disponível pela API do YouTube.');}}catch(error){if(request===youtubeRequest)notify(error.message);}finally{if(request===youtubeRequest){youtubeBusy=false;if(page==='musica')render();}}
 }
 async function loadYouTubeTracks(index){
   const item=youtubePlaylists[index];if(!item||youtubeBusy)return;
   youtubeBusy=true;const request=++youtubeRequest;render();
-  try{const rows=await youtubeAccount.getPlaylistTracks(item.id);if(request===youtubeRequest){youtubeTracks=rows;if(!rows.length)notify('Esta playlist não tem vídeos disponíveis para o player.');}}catch(error){if(request===youtubeRequest)notify(error.message);}finally{if(request===youtubeRequest){youtubeBusy=false;if(page==='musica')render();}}
+  try{const rows=await operationLoading.run('Carregando músicas…',()=>youtubeAccount.getPlaylistTracks(item.id));if(request===youtubeRequest){youtubeTracks=rows;if(!rows.length)notify('Esta playlist não tem vídeos disponíveis para o player.');}}catch(error){if(request===youtubeRequest)notify(error.message);}finally{if(request===youtubeRequest){youtubeBusy=false;if(page==='musica')render();}}
 }
 
 function localDateTime(at=Date.now()){
@@ -232,15 +265,15 @@ function openBodyEditor(row=null){
   document.body.append(dialog);const cleanup=()=>{dialog.close();dialog.remove();};$('.secondary',dialog).onclick=cleanup;dialog.oncancel=e=>{e.preventDefault();cleanup();};
   $('form',dialog).onsubmit=async event=>{
     event.preventDefault();const button=$('[type=submit]',dialog);if(button.disabled)return;button.disabled=true;
-    try{const f=$('form',dialog);await store.saveBodyWeight({id:row?.id,value:f.elements.bodyWeight.value,at:new Date(f.elements.recordedAt.value).getTime(),notes:f.elements.weightNotes.value});await refresh();cleanup();render();notify('Peso corporal salvo no aparelho.');}catch(e){notify(e.message);button.disabled=false;}
+    try{const f=$('form',dialog);await db.saveBodyWeight({id:row?.id,value:f.elements.bodyWeight.value,at:new Date(f.elements.recordedAt.value).getTime(),notes:f.elements.weightNotes.value});await refresh();cleanup();render();notify('Peso corporal salvo no aparelho.');}catch(e){notify(e.message);button.disabled=false;}
   };dialog.showModal();
 }
 async function exportBackup(){
-  try{const backup=await store.exportBackup(),blob=new Blob([JSON.stringify(backup,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`PeraGym-backup-${new Date().toISOString().slice(0,10)}.json`;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),5000);notify('Backup gerado. Guarde o arquivo com segurança.');}catch(e){notify(e.message);}
+  try{const backup=await db.exportBackup(),blob=new Blob([JSON.stringify(backup,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`PeraGym-backup-${new Date().toISOString().slice(0,10)}.json`;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),5000);notify('Backup gerado. Guarde o arquivo com segurança.');}catch(e){notify(e.message);}
 }
 async function importBackup(event){
   const file=event.target.files[0];event.target.value='';if(!file)return;
-  try{if(file.size>15*1024*1024)throw new Error('Use um backup de até 15 MB.');const raw=JSON.parse(await file.text());store.validateBackup(raw);if(!await ask('Substituir os dados locais?','Importar este backup substituirá as fichas e registros deste perfil. Exporte os dados atuais antes, se precisar.','Importar backup'))return;await store.importBackup(raw);await clearActive();await refresh();await setTheme(data.theme,false);render();notify('Backup importado.');}catch(e){notify(e instanceof SyntaxError?'Este arquivo não contém um backup JSON válido.':e.message);}
+  try{if(file.size>15*1024*1024)throw new Error('Use um backup de até 15 MB.');const raw=JSON.parse(await file.text());db.validateBackup(raw);if(!await ask('Substituir os dados locais?','Importar este backup substituirá as fichas e registros deste perfil. Exporte os dados atuais antes, se precisar.','Importar backup'))return;await db.importBackup(raw);await clearActive();await refresh();await setTheme(data.theme,false);render();notify('Backup importado.');}catch(e){notify(e instanceof SyntaxError?'Este arquivo não contém um backup JSON válido.':e.message);}
 }
 
 function bindPage(){
@@ -264,11 +297,26 @@ async function handle(action,ds={}){
   if(handling)return;
   handling=true;
   try{
-    if(action==='legacy-import'){if(await ask('Copiar treinos anteriores?','Os registros da versão sem login serão copiados para este perfil. Ele precisa estar vazio. A cópia original, sem senha, será preservada.','Copiar treinos')){await store.migrateLegacy();await refresh();render();notify('Treinos copiados para o seu perfil.');}return;}
+    if(action==='legacy-import'){if(await ask('Copiar treinos anteriores?','Os registros da versão sem login serão copiados para este perfil. Ele precisa estar vazio. A cópia original, sem senha, será preservada.','Copiar treinos')){await db.migrateLegacy();await refresh();render();notify('Treinos copiados para o seu perfil.');}return;}
+    if(action==='history-delete'){
+      const record=data.sessions.find(item=>item.id===ds.id);if(!record)return;
+      if(await ask('Excluir treino do histórico?',`${record.workoutName} · ${new Date(record.completedAt).toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'short'})}. A ficha e as cargas serão mantidas.`,'Excluir treino')){await db.deleteSession(record.id);await refresh();render();notify('Treino removido do histórico.');}return;
+    }
+    if(action==='session-open'){if(active){selectedId=active.id;render();window.scrollTo(0,0);}return;}
+    if(action==='session-pause'){if(!active||active.pausedAt!==null)return;await persistActive(pauseSession(active));resetRest();render();notify('Treino pausado.');return;}
+    if(action==='session-resume'){if(!active||active.pausedAt===null)return;await persistActive(resumeSession(active));render();notify('Treino retomado.');return;}
+    if(action==='session-restart'){
+      if(!active)return;
+      if(await ask('Reiniciar este treino?','O tempo será zerado e os exercícios serão desmarcados. A ficha e as cargas serão mantidas.','Reiniciar treino')){await persistActive(restartSession(active));resetRest();render();notify('Treino reiniciado.');}return;
+    }
+    if(action==='session-cancel'){
+      if(!active)return;
+      if(await ask('Cancelar este treino?','O treino em andamento será descartado. A ficha e as cargas serão mantidas.','Cancelar treino')){await clearActive();selectedId=null;page='inicio';render();window.scrollTo(0,0);notify('Treino cancelado.');}return;
+    }
     if(action==='go-music')return nav('musica');
-    if(action==='spotify-connect'){try{sessionStorage.setItem('peragym:spotify-profile',localAccount.getState().profile.id);}catch(_){}return await spotifyAccount.connect();}
+    if(action==='spotify-connect'){try{sessionStorage.setItem('peragym:spotify-profile',localAccount.getState().profile.id);}catch(_){}const result=await operationLoading.run('Conectando ao Spotify…',()=>spotifyAccount.connectPopup());if(result?.connected){try{sessionStorage.removeItem('peragym:spotify-profile');}catch(_){}await activateMusic('spotify');}else if(result?.error)notify(result.error);return;}
     if(action==='youtube-prepare')return await prepareYouTube();
-    if(action==='youtube-connect'){await youtubeAccount.connect();return await loadYouTubePlaylists();}
+    if(action==='youtube-connect'){const result=await operationLoading.run('Conectando ao YouTube…',()=>youtubeAccount.connect());if(result.connected)await activateMusic('youtube');return;}
     if(action==='youtube-library')return await loadYouTubePlaylists();
     if(action==='youtube-playlist')return await loadYouTubeTracks(Number(ds.index));
     if(action==='youtube-track')return await playMusic(youtubeTracks[Number(ds.index)].url);
@@ -277,10 +325,10 @@ async function handle(action,ds={}){
     if(action==='spotify-playlist')return await playMusic(spotifyPlaylists[Number(ds.index)].url);
     if(action==='spotify-disconnect'){musicPlayer.close();spotifyAccount.disconnect();spotifyPlaylists=[];render();return;}
     if(action==='music-play')return await playMusic(data.musicLinks[Number(ds.index)]);
-    if(action==='music-remove'){const urls=data.musicLinks.filter((_,i)=>i!==Number(ds.index));await store.setSetting('musicLinks',urls);data.musicLinks=urls;render();return;}
+    if(action==='music-remove'){const urls=data.musicLinks.filter((_,i)=>i!==Number(ds.index));await db.setSetting('musicLinks',urls);data.musicLinks=urls;render();return;}
     if(action==='body-add')return openBodyEditor();
     if(action==='body-edit')return openBodyEditor(data.bodyWeights.find(w=>w.id===ds.id));
-    if(action==='body-delete'){if(await ask('Excluir este registro?','Este peso será removido do gráfico.','Excluir registro')){await store.deleteBodyWeight(ds.id);await refresh();render();notify('Registro removido.');}return;}
+    if(action==='body-delete'){if(await ask('Excluir este registro?','Este peso será removido do gráfico.','Excluir registro')){await db.deleteBodyWeight(ds.id);await refresh();render();notify('Registro removido.');}return;}
     if(action==='backup-export')return exportBackup();
     if(action==='backup-import')return $('#import-file').click();
     if(action==='settings')return nav('ajustes');
@@ -292,7 +340,7 @@ async function handle(action,ds={}){
     if(action==='edit')return openEditor(workout(ds.id));
     if(action==='delete'){
       const w=workout(ds.id);if(await ask('Excluir esta ficha?',`A ficha “${w.name}” e seus exercícios serão excluídos. O histórico de treinos concluídos será mantido.`,'Excluir ficha')){
-        await call('deleteWorkout',w.id);if(active&&active.id===w.id)await clearActive();await refresh();selectedId=null;render();notify('Ficha excluída.');
+        await call('deleteWorkout',w.id);if(active&&active.id===w.id)clearActiveMemory();await refresh();selectedId=null;render();notify('Ficha excluída.');
       }return;
     }
     if(action.startsWith('weight-')){
@@ -303,20 +351,24 @@ async function handle(action,ds={}){
     }
     if(action==='start'){
       const w=workout(ds.id);if(!w.exercises.length){notify('Adicione um exercício para começar.');return;}
-      if(active&&active.id!==w.id){if(!await ask('Começar outro treino?','O treino em andamento será encerrado sem entrar no histórico.','Começar outro'))return;await clearActive();}
-      if(!active){active={id:w.id,startedAt:Date.now(),done:[]};await persistActive();}
+      if(active&&active.id!==w.id&&!await ask('Começar outro treino?','O treino em andamento será encerrado sem entrar no histórico.','Começar outro'))return;
+      if(!active||active.id!==w.id){await persistActive(createSession(w.id));resetRest();}
+      else if(active.pausedAt!==null)await persistActive(resumeSession(active));
       selectedId=w.id;render();window.scrollTo(0,0);return;
     }
     if(action==='check-exercise'){
-      const id=ds.id;active.done=active.done.includes(id)?active.done.filter(x=>x!==id):[...active.done,id];await persistActive();render();return;
+      if(!active||active.pausedAt!==null)return;
+      const id=ds.id;if(!workout(active.id)?.exercises.some(e=>e.id===id))return;
+      await persistActive({...active,done:active.done.includes(id)?active.done.filter(x=>x!==id):[...active.done,id]});render();return;
     }
     if(action==='finish'){
+      if(!active)return;
       const w=workout(active.id),incomplete=active.done.length<w.exercises.length;
       if(incomplete&&!await ask('Concluir este treino?','Alguns exercícios ainda não foram marcados como concluídos. Deseja registrar o treino mesmo assim?','Concluir treino'))return;
-      await call('finishWorkout',JSON.stringify({workoutId:active.id,duration:Math.max(0,Math.floor((Date.now()-active.startedAt)/1000))}));
-      await clearActive();await refresh();selectedId=null;page='historico';render();window.scrollTo(0,0);notify('Treino registrado.');return;
+      await call('finishWorkout',JSON.stringify({workoutId:active.id,duration:elapsedSeconds(active)}));
+      clearActiveMemory();await refresh();selectedId=null;page='historico';render();window.scrollTo(0,0);notify('Treino registrado.');return;
     }
-    if(action==='rest'){restUntil=Date.now()+Number(ds.seconds)*1000;startRest();return;}
+    if(action==='rest'){if(!active||active.pausedAt!==null)return;restUntil=Date.now()+Number(ds.seconds)*1000;startRest();return;}
   }catch(e){notify(e.message);}finally{handling=false;}
 }
 
@@ -361,9 +413,15 @@ function editWeight(e){
   const dialog=document.createElement('dialog');dialog.className='weight-dialog';dialog.innerHTML=`<form class="confirm-content"><h2>Qual é a nova carga?</h2><p>${escapeHtml(e.name)}</p><label class="small-label">Carga em quilos<input id="quick-weight" type="text" inputmode="decimal" required maxlength="10" value="${formatKg(e.weight).replace(/\./g,'')}" aria-label="Nova carga em quilos"></label><p class="form-hint">De 0 a 2.000 kg. Ex.: 12,5</p><div class="confirm-actions"><button type="button" class="button secondary">Cancelar</button><button type="submit" class="button primary">Salvar carga ${cassette()}</button></div></form>`;
   document.body.append(dialog);const cleanup=()=>{dialog.close();dialog.remove();};$('.secondary',dialog).onclick=cleanup;dialog.oncancel=ev=>{ev.preventDefault();cleanup();};$('form',dialog).onsubmit=async ev=>{ev.preventDefault();try{const weight=parseWeight($('#quick-weight',dialog).value);await call('updateWeight',e.id,weight);await refresh();cleanup();render();notify('Carga atualizada.');}catch(err){notify(err.message);}};dialog.showModal();$('#quick-weight',dialog).select();
 }
-async function persistActive(){await store.setSetting('activeSession',active);}
-async function clearActive(){active=null;restUntil=0;clearInterval(timerHandle);clearInterval(restHandle);$('.rest-pill')?.remove();await store.setSetting('activeSession',null);}
-function updateSessionTimer(){if($('#session-time')&&active)$('#session-time').textContent=timeText(Math.floor((Date.now()-active.startedAt)/1000));}
+async function persistActive(next=active){
+  await db.setSetting('activeSession',next);
+  active=next?structuredClone(next):null;data.activeSession=active?structuredClone(active):null;
+}
+function resetRest(){restUntil=0;clearInterval(restHandle);$('.rest-pill')?.remove();}
+function clearActiveMemory(){active=null;data.activeSession=null;clearInterval(timerHandle);resetRest();}
+async function clearActive(){await persistActive(null);clearActiveMemory();}
+function updateSessionTimer(){if($('#session-time')&&active)$('#session-time').textContent=timeText(elapsedSeconds(active));}
+
 function startRest(){
   $('.rest-pill')?.remove();clearInterval(restHandle);const el=document.createElement('div');el.className='rest-pill';el.setAttribute('role','timer');el.setAttribute('aria-label','Tempo de descanso');el.innerHTML='<span>Descanso</span><strong></strong><button aria-label="Encerrar descanso">×</button>';document.body.append(el);$('button',el).onclick=()=>{clearInterval(restHandle);el.remove();restUntil=0;};
   const tick=()=>{const seconds=Math.max(0,Math.ceil((restUntil-Date.now())/1000));$('strong',el).textContent=timeText(seconds);if(seconds===0){clearInterval(restHandle);el.remove();notify('Descanso concluído.');}};tick();restHandle=setInterval(tick,500);
@@ -382,13 +440,14 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$$('dialog[open]')
 async function unlockApp(){
   await refresh();await setTheme(data.theme,false);
   page=returningFromSpotify?'musica':'inicio';selectedId=null;active=null;
-  const saved=data.activeSession;
-  if(saved&&workout(saved.id)&&Number.isFinite(saved.startedAt)&&Array.isArray(saved.done)){active=saved;if(!returningFromSpotify)selectedId=saved.id;}
-  try{legacyStatus=await store.inspectLegacy();}catch(_){legacyStatus=null;}
+  const saved=normalizeSession(data.activeSession);
+  if(saved&&workout(saved.id)){active={...saved,done:saved.done.filter(id=>workout(saved.id).exercises.some(e=>e.id===id))};if(!returningFromSpotify)selectedId=saved.id;}
+  try{legacyStatus=await db.inspectLegacy();}catch(_){legacyStatus=null;}
   render();$('#main').focus();
   void initializeMusic();
 }
 async function lockApp(){
+  operationLoading.clear();authBusyRelease=null;
   musicGeneration++;playlistRequest++;youtubeRequest++;
   musicPlayer.close();spotifyAccount?.disconnect();youtubeAccount?.disconnect({revoke:false});
   spotifyAccount=null;youtubeAccount=null;spotifyPlaylists=[];youtubePlaylists=[];youtubeTracks=[];musicBusy=false;youtubeBusy=false;musicConfigLoaded=false;
@@ -402,6 +461,7 @@ async function lockApp(){
   render();await authUI.reset();render();$('#main').focus();
 }
 async function init(){
+  if(window.__peragymSpotifyReturn)return;
   try{
     await authUI.initialize();render();
     window.dispatchEvent(new Event('peragym:app-ready'));

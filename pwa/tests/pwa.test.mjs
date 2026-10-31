@@ -84,7 +84,7 @@ test('free offline preparation downloads the public app without calling account 
   });
   await h.prepare();
   assert.equal(h.messages.at(-1).type,'PERAGYM_OFFLINE_READY');
-  assert.deepEqual(downloads.sort(),['/app/app.js','/app/boot.js','/app/charts.js','/app/db.js','/app/index.html','/app/local-account.js','/app/local-auth-ui.js','/app/local-biometric.js','/app/music-links.js','/app/music-player.js','/app/spotify-account.js','/app/spotify-playback.js','/app/style.css','/app/youtube-account.js','/assets/cassette.svg','/assets/fonts/bungee.ttf','/assets/fonts/yellowtail.ttf','/assets/night-drive.jpg','/assets/palms.svg']);
+  assert.deepEqual(downloads.sort(),['/app/app.js','/app/boot.js','/app/charts.js','/app/db.js','/app/index.html','/app/local-account.js','/app/local-auth-ui.js','/app/local-biometric.js','/app/music-links.js','/app/music-player.js','/app/operation-loading.js','/app/spotify-account.js','/app/spotify-playback.js','/app/spotify-return.js','/app/style.css','/app/workout-session.js','/app/youtube-account.js','/assets/cassette.svg','/assets/fonts/bungee.ttf','/assets/fonts/yellowtail.ttf','/assets/night-drive.jpg','/assets/palms.svg']);
 });
 
 test('complete app opens offline with no session, cookie or donation requirement', async () => {
@@ -127,7 +127,7 @@ test('migration preserves an older working offline shell until the complete free
   assert(h.cacheData.has('peragym-2.1.0-app'));
   assert.equal(await (await h.fetch('/app/','navigate')).text(),'/app/index.html');
   online=true;await h.prepare();
-  assert(h.cacheData.has('peragym-3.4.0-app'));assert.equal(h.cacheData.has('peragym-2.1.0-app'),false);
+  assert(h.cacheData.has('peragym-3.5.0-app'));assert.equal(h.cacheData.has('peragym-2.1.0-app'),false);
   assert.equal(h.messages.at(-1).type,'PERAGYM_OFFLINE_READY');
 });
 
@@ -136,7 +136,7 @@ test('transient asset failures preserve the offline app and never touch the loca
   const h=harness(async url=>failed?new Response('temporarily unavailable',{status:503}):appAsset(new URL(url).pathname));
   await h.prepare();failed=true;await h.prepare();
   assert.equal((await h.fetch('/app/','navigate')).status,200);
-  assert(h.cacheData.has('peragym-3.4.0-app'));
+  assert(h.cacheData.has('peragym-3.5.0-app'));
   assert.equal(workerSource.includes('indexedDB.deleteDatabase'),false);
 });
 
@@ -167,8 +167,8 @@ test('night theme fonts and imagery are cached offline before the previous app s
   assert(h.cacheData.has('peragym-2.1.0-app'));
   missingFont=false;await h.prepare();
   assert.equal(h.cacheData.has('peragym-2.1.0-app'),false);
-  assert(h.cacheData.has('peragym-3.4.0-app'));
-  const current=h.cacheData.get('peragym-3.4.0-public');
+  assert(h.cacheData.has('peragym-3.5.0-app'));
+  const current=h.cacheData.get('peragym-3.5.0-public');
   for(const path of ['/assets/cassette.svg','/assets/night-drive.jpg','/assets/palms.svg','/assets/fonts/bungee.ttf','/assets/fonts/yellowtail.ttf'])assert(current.has(`${origin}${path}`));
   const imagery=await h.fetch('/assets/night-drive.jpg');assert.equal(imagery.headers.get('Content-Type'),'image/jpeg; charset=utf-8');
 });
@@ -192,7 +192,7 @@ test('music modules are available offline and a missing module retains the previ
   for(const url of ['https://www.youtube.com/iframe_api','https://www.youtube.com/embed/M7lc1UVf-VE','https://s.ytimg.com/player.js'])assert.equal(await h.fetch(url),undefined);
 });
 
-for (const missingModule of ['/app/local-account.js', '/app/local-auth-ui.js', '/app/local-biometric.js', '/app/youtube-account.js']) {
+for (const missingModule of ['/app/local-account.js', '/app/local-auth-ui.js', '/app/local-biometric.js', '/app/youtube-account.js', '/app/workout-session.js', '/app/operation-loading.js', '/app/spotify-return.js']) {
   test(`incomplete replacement preserves the previous app when ${missingModule} is unavailable`, async () => {
     let online = true;
     const h = harness(async url => {

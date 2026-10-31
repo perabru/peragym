@@ -30,7 +30,7 @@ function setup(t, options={}) {
   const originals = Object.fromEntries(['window','fetch','crypto','localStorage','indexedDB','location','history','sessionStorage'].map(key=>[key,Object.getOwnPropertyDescriptor(globalThis,key)]));
   const oldNow=Date.now;
   let now=1_800_000_000_000, current=new URL(options.href || REDIRECT);
-  const assigned=[], replaced=[], requests=[], changes=[];
+  const assigned=[], replaced=[], requests=[], changes=[],popups=[],listeners=new Map();
   const storage=new MemoryStorage();
   const location={
     get href(){return current.href;}, set href(value){current=new URL(value,current);},
@@ -40,7 +40,15 @@ function setup(t, options={}) {
     toString(){return current.href;}
   };
   const history={state:{view:'musica'},replaceState(state,title,url){replaced.push({state,title,url:String(url)});location.href=new URL(url,current).href;}};
-  const window={location,history,sessionStorage:storage,crypto:webcrypto};
+  const window={location,history,sessionStorage:storage,crypto:webcrypto,
+    addEventListener(type,listener){if(!listeners.has(type))listeners.set(type,new Set());listeners.get(type).add(listener);},
+    removeEventListener(type,listener){listeners.get(type)?.delete(listener);},
+    open(url,name,features){
+      if(options.blockPopup)return null;
+      const popup={closed:false,name,features,navigations:[url],messages:[],sessionStorage:new MemoryStorage(),
+        close(){this.closed=true;},postMessage(data,origin){this.messages.push({data,origin});}};
+      popup.location={replace(value){popup.navigations.push(String(value));}};popups.push(popup);return popup;
+    }};
   let responder=options.fetch || (()=>{throw new Error('Unexpected network request');});
   Object.defineProperty(globalThis,'window',{configurable:true,value:window,writable:true});
   Object.defineProperty(globalThis,'location',{configurable:true,value:location,writable:true});
@@ -61,7 +69,9 @@ function setup(t, options={}) {
     }
   });
   const account=createSpotifyAccount({clientId:options.clientId ?? CLIENT,redirectUri:options.redirectUri ?? REDIRECT,onChange:state=>changes.push(structuredClone(state))});
-  return {account,storage,location,history,assigned,replaced,requests,changes,
+  t.after(()=>account.disconnect());
+  return {account,storage,location,history,assigned,replaced,requests,changes,popups,listeners,
+    message(event){for(const listener of [...(listeners.get('message')||[])])listener(event);},
     advance:ms=>{now+=ms;},respond:fn=>{responder=fn;},now:()=>now};
 }
 
@@ -310,4 +320,140 @@ test('disconnect aborts a pending playlist request immediately even when fetch i
   await assert.rejects(()=>reading,/encerrada/);
   assert.equal(signal.aborted,true);assert.equal(env.account.getState().connected,false);
   assert.equal(env.account.getState().profile,undefined);
+});
+
+async function waitFor(predicate) {
+  for(let i=0;i<100&&!predicate();i++)await new Promise(resolve=>setImmediate(resolve));
+  assert.ok(predicate(),'Expected asynchronous PKCE preparation to complete');
+}
+async function beginPopup(env) {
+  const completion=env.account.connectPopup();
+  assert.equal(env.popups.length,1,'Popup must open synchronously in the click call stack');
+  const popup=env.popups[0];assert.equal(popup.navigations[0],'about:blank');
+  await waitFor(()=>popup.navigations.length===2);
+  const auth=new URL(popup.navigations[1]),pending=JSON.parse(env.storage.getItem(PENDING));
+  return {completion,popup,auth,pending};
+}
+function successfulExchange(env) {
+  env.respond(call=>{
+    if(call.url==='https://accounts.spotify.com/api/token')return json(TOKEN);
+    if(call.url==='https://api.spotify.com/v1/me')return json(PROFILE);
+    throw new Error(`Unexpected request: ${call.url}`);
+  });
+}
+
+test('popup PKCE returns tokens to the original RAM session without navigating or rewriting its URL',async t=>{
+  const env=setup(t,{href:`${REDIRECT}?view=music#musica`}),original=env.location.href;
+  const {completion,popup,auth,pending}=await beginPopup(env);
+  assert.equal(auth.origin,'https://accounts.spotify.com');assert.equal(auth.searchParams.get('redirect_uri'),REDIRECT);
+  assert.equal(auth.searchParams.get('state'),pending.state);
+  assert.deepEqual(JSON.parse(popup.sessionStorage.getItem(PENDING)),pending,'Temporary PKCE copy supports opener-loss fallback');
+  successfulExchange(env);
+  const callbackUrl=`${REDIRECT}?code=popup-code&state=${pending.state}`;
+  env.message({origin:ORIGIN,source:popup,data:{type:'peragym:spotify:callback',callbackUrl}});
+  assert.equal(env.storage.getItem(PENDING),null,'One-use pending state is consumed before token exchange awaits');
+  assert.deepEqual(popup.messages,[{data:{type:'peragym:spotify:ack',state:pending.state},origin:ORIGIN}]);
+  const result=await completion;assert.equal(result.connected,true);assert.equal(result.mode,'popup');
+  assert.equal(env.account.getState().connected,true);assert.equal(await env.account.getAccessToken(),'token-one');
+  assert.equal(env.location.href,original);assert.equal(env.assigned.length,0);assert.equal(env.replaced.length,0);
+  assert.equal(popup.closed,true);assert.equal(env.listeners.get('message').size,0);
+  const payload=new URLSearchParams(env.requests[0].body);
+  assert.equal(payload.get('code'),'popup-code');assert.equal(payload.get('code_verifier'),pending.verifier);
+  const requests=env.requests.length;
+  env.message({origin:ORIGIN,source:popup,data:{type:'peragym:spotify:callback',callbackUrl}});
+  await new Promise(resolve=>setImmediate(resolve));assert.equal(env.requests.length,requests);
+  assert.equal(/token-one|refresh-one/.test(JSON.stringify(popup.messages)),false);
+});
+
+test('popup messages require the exact origin, popup reference, callback route and pending state',async t=>{
+  const env=setup(t),{completion,popup,pending}=await beginPopup(env);
+  const correct={origin:ORIGIN,source:popup,data:{type:'peragym:spotify:callback',callbackUrl:`${REDIRECT}?code=code&state=${pending.state}`}};
+  for(const event of [
+    {...correct,origin:'https://evil.example'}, {...correct,source:{}},
+    {...correct,data:{type:'unrelated',callbackUrl:correct.data.callbackUrl}},
+    {...correct,data:{type:'peragym:spotify:callback',callbackUrl:`https://evil.example/peragym/docs/app/?code=code&state=${pending.state}`}},
+    {...correct,data:{type:'peragym:spotify:callback',callbackUrl:`${ORIGIN}/elsewhere/?code=code&state=${pending.state}`}},
+    {...correct,data:{type:'peragym:spotify:callback',callbackUrl:`${REDIRECT}?code=code&state=${'b'.repeat(43)}`}},
+    {...correct,data:{type:'peragym:spotify:callback',callbackUrl:`${REDIRECT}?code=code&state=${pending.state}&state=${pending.state}`}},
+    {...correct,data:{type:'peragym:spotify:callback',callbackUrl:`https://@perabru.github.io/peragym/docs/app/?code=code&state=${pending.state}`}}
+  ])env.message(event);
+  assert.equal(env.requests.length,0);assert.ok(env.storage.getItem(PENDING));assert.equal(popup.messages.length,0);
+  successfulExchange(env);env.message(correct);assert.equal((await completion).connected,true);
+});
+
+test('popup blocking uses the existing redirect flow with an explicit local-password warning',async t=>{
+  const env=setup(t,{blockPopup:true});const result=await env.account.connectPopup();
+  assert.equal(result.mode,'redirect');assert.equal(result.redirected,true);assert.equal(result.connected,false);
+  assert.match(result.warning,/senha/);assert.match(env.account.getState().error,/bloqueou/);
+  assert.equal(env.assigned.length,1);assert.equal(new URL(env.assigned[0]).origin,'https://accounts.spotify.com');
+  assert.ok(env.storage.getItem(PENDING));assert.equal(env.requests.length,0);
+});
+
+test('an unconfigured account never opens an authorization window',async t=>{
+  const env=setup(t,{clientId:''});await assert.rejects(()=>env.account.connectPopup(),/Client ID/);
+  assert.equal(env.popups.length,0);assert.equal(env.storage.length,0);assert.equal(env.requests.length,0);
+});
+
+test('disconnect closes popup, removes listeners and ignores a late authorization callback',async t=>{
+  const env=setup(t),{completion,popup,pending}=await beginPopup(env);
+  env.account.disconnect();const result=await completion;
+  assert.equal(result.connected,false);assert.match(result.error,/encerrada/);
+  assert.equal(popup.closed,true);assert.equal(env.listeners.get('message').size,0);assert.equal(env.storage.length,0);
+  env.message({origin:ORIGIN,source:popup,data:{type:'peragym:spotify:callback',callbackUrl:`${REDIRECT}?code=late&state=${pending.state}`}});
+  assert.equal(env.requests.length,0);assert.equal(env.account.getState().connected,false);
+});
+
+test('disconnect during popup token exchange cannot restore a Spotify session',async t=>{
+  const env=setup(t),{completion,popup,pending}=await beginPopup(env);let release;
+  env.respond(call=>{
+    if(call.url==='https://accounts.spotify.com/api/token')return new Promise(resolve=>{release=()=>resolve(json(TOKEN));});
+    if(call.url==='https://api.spotify.com/v1/me')return json(PROFILE);
+    throw new Error('Unexpected request');
+  });
+  env.message({origin:ORIGIN,source:popup,data:{type:'peragym:spotify:callback',callbackUrl:`${REDIRECT}?code=code&state=${pending.state}`}});
+  await waitFor(()=>typeof release==='function');env.account.disconnect();release();
+  assert.equal((await completion).connected,false);assert.equal(env.account.getState().connected,false);
+  assert.equal(popup.closed,true);await assert.rejects(()=>env.account.getAccessToken());
+});
+
+test('popup timeout clears pending state and closes the window without a token exchange',async t=>{
+  const env=setup(t),deadline=fakeRequestDeadline(t),{completion,popup}=await beginPopup(env);
+  assert.equal([...deadline.timers.values()].filter(timer=>timer.delay===600_000).length,1);
+  deadline.fire();const result=await completion;
+  assert.equal(result.connected,false);assert.match(result.error,/expirou/);
+  assert.equal(popup.closed,true);assert.equal(env.storage.length,0);assert.equal(env.listeners.get('message').size,0);
+  assert.equal(deadline.timers.size,0);assert.equal(env.requests.length,0);
+});
+
+test('completeRedirect accepts a validated callback URL without touching the main URL',async t=>{
+  const env=setup(t),{pending}=await begin(env),original=env.location.href;
+  successfulExchange(env);
+  const result=await env.account.completeRedirect({callbackUrl:`${REDIRECT}?code=returned&state=${pending.state}`});
+  assert.equal(result.connected,true);assert.equal(env.location.href,original);assert.equal(env.replaced.length,0);
+});
+
+test('a second connect cancels the previous popup and only the latest state can finish',async t=>{
+  const env=setup(t),first=await beginPopup(env);
+  const latestCompletion=env.account.connectPopup();assert.equal(env.popups.length,2);
+  const latest=env.popups[1];await waitFor(()=>latest.navigations.length===2);
+  const pending=JSON.parse(env.storage.getItem(PENDING));
+  assert.equal((await first.completion).connected,false);assert.equal(first.popup.closed,true);
+  env.message({origin:ORIGIN,source:first.popup,data:{type:'peragym:spotify:callback',callbackUrl:`${REDIRECT}?code=old&state=${first.pending.state}`}});
+  assert.equal(env.requests.length,0);assert.equal(JSON.parse(env.storage.getItem(PENDING)).state,pending.state);
+  successfulExchange(env);
+  env.message({origin:ORIGIN,source:latest,data:{type:'peragym:spotify:callback',callbackUrl:`${REDIRECT}?code=new&state=${pending.state}`}});
+  assert.equal((await latestCompletion).connected,true);
+});
+
+test('closing the popup releases its pending authorization without waiting ten minutes',async t=>{
+  const previousSet=globalThis.setInterval,previousClear=globalThis.clearInterval;
+  const intervals=new Map();let sequence=0;
+  globalThis.setInterval=(callback,delay)=>{const id=++sequence;intervals.set(id,{callback,delay});return id;};
+  globalThis.clearInterval=id=>intervals.delete(id);
+  t.after(()=>{globalThis.setInterval=previousSet;globalThis.clearInterval=previousClear;});
+  const env=setup(t),{completion,popup}=await beginPopup(env);
+  assert.equal([...intervals.values()][0].delay,500);popup.closed=true;
+  for(const interval of [...intervals.values()])interval.callback();
+  const result=await completion;assert.equal(result.connected,false);assert.match(result.error,/fechada/);
+  assert.equal(intervals.size,0);assert.equal(env.storage.length,0);assert.equal(env.listeners.get('message').size,0);
 });

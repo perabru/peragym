@@ -29,6 +29,24 @@
 .auth-card .button{margin-top:3px;font-size:12px;min-height:46px}
 .auth-footnote{font-size:11px;line-height:1.7;color:var(--muted);margin-top:22px}
 .auth-error{font-size:12px;color:var(--pink);padding:10px;border-left:2px solid var(--pink);background:var(--surface2)}
+.auth-card label.auth-copy-guest{display:flex;align-items:flex-start;gap:9px;font-size:11px;line-height:1.6;font-weight:500}
+.auth-card .auth-copy-guest input{width:18px;height:18px;min-height:18px;flex-shrink:0;margin:1px 0 0;accent-color:var(--pink)}
+.auth-guest{margin-top:13px}
+.auth-card .guest-login{margin-bottom:20px;border-color:var(--cyan);color:var(--cyan)}
+.auth-card .auth-copy-guest input{padding:0;border:0}
+.operation-loading{width:calc(100% - 40px);max-width:340px;padding:29px 24px;border:1px solid var(--pink);border-radius:5px;color:var(--ink);background:var(--surface);box-shadow:7px 7px 0 #100b2650}
+.operation-loading::backdrop{background:#100b2699;backdrop-filter:blur(3px)}
+.operation-loading-content{display:flex;align-items:center;flex-direction:column;gap:16px;text-align:center}
+.operation-loading-cassette{width:100px;height:auto;transform:rotate(-8deg);animation:operation-tape 1.4s ease-in-out infinite}
+.operation-loading-content h2{font:16px ViceDisplay,system-ui,sans-serif;letter-spacing:0;text-transform:uppercase}
+.operation-loading-message{font-size:13px;line-height:1.6;color:var(--muted)}
+.operation-loading-indicator{display:flex;justify-content:center;gap:7px;margin:3px 0}
+.operation-loading-indicator span{width:7px;height:7px;background:var(--pink);animation:operation-dot 1s ease-in-out infinite}
+.operation-loading-indicator span:nth-child(2){background:var(--cyan);animation-delay:.15s}
+.operation-loading-indicator span:nth-child(3){background:var(--violet);animation-delay:.3s}
+@keyframes operation-tape{50%{transform:rotate(4deg) translateY(-3px)}}
+@keyframes operation-dot{50%{opacity:.25;transform:translateY(-3px)}}
+@media(prefers-reduced-motion:reduce){.operation-loading-cassette,.operation-loading-indicator span{animation:none}}
 .local-profile-card h2{overflow-wrap:anywhere}
 @media(max-width:650px){.auth-layout{grid-template-columns:1fr;margin:12px auto 25px;max-width:410px;min-height:0}.auth-cover{padding:20px;gap:12px;border-right:0;border-bottom:1px solid var(--line);min-height:150px}.auth-cover .eyebrow{font-size:8px}.auth-cassette{width:125px;position:absolute;right:30px;top:40px;transform:rotate(-12deg)}.auth-cover>p{align-self:flex-start;font-size:33px;margin:8px 0 5px 0}.auth-cover .eyebrow{align-self:flex-start}.auth-side{align-self:flex-start;font-size:8px}.auth-card{padding:22px}.auth-tabs{margin-bottom:23px}.auth-card h1{font-size:23px}.auth-subtitle{margin-bottom:18px}}
 @media(max-width:360px){.auth-card{padding:18px}.auth-cover{padding:18px}.auth-cassette{width:100px;right:16px;top:48px}.auth-cover>p{font-size:30px}}
@@ -168,6 +186,24 @@ button svg,button img{pointer-events:none;flex-shrink:0}
 .session-bar span{display:block;font:7px ViceDisplay,sans-serif;letter-spacing:1px;color:var(--pink)}.session-bar strong{display:block;font:25px ViceDisplay,sans-serif;font-variant-numeric:tabular-nums;color:var(--cyan);margin-top:7px;line-height:1.2}
 .session-bar button{display:flex;align-items:center;justify-content:center;gap:7px;min-height:48px;padding:9px 12px;background:var(--pink);color:var(--button-ink);font-size:10px;font-weight:800;border:1px solid var(--pink);box-shadow:2px 3px 0 var(--night)}
 .session-bar .cassette-icon{width:27px;height:20px}
+.session-bar{display:block}
+.session-summary{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.session-bar .session-progress{font:11px system-ui,sans-serif;color:var(--muted);text-align:right;letter-spacing:0}
+.session-buttons{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:18px}
+.session-buttons button.secondary{background:var(--surface);color:var(--ink);border-color:var(--line);box-shadow:2px 2px 0 #100b2620;font-size:11px}
+.session-buttons button.primary{font-size:11px}
+.session-buttons button.session-cancel{color:var(--pink)}
+.session-paused{border-color:var(--yellow)}
+.session-paused .session-summary>div>span{color:var(--muted)}
+.ongoing-workout{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 17px;margin-bottom:25px;background:var(--surface2);border:1px solid var(--cyan);border-left-width:3px}
+.ongoing-workout>div{min-width:0}
+.ongoing-workout strong{display:block;font-size:12px;margin-top:5px;overflow-wrap:anywhere}
+.ongoing-workout .eyebrow{font-size:8px}
+.ongoing-workout .button{font-size:10px;flex-shrink:0;padding:10px}
+.ongoing-workout #session-time{white-space:nowrap;font-variant-numeric:tabular-nums}
+.history-remove{gap:6px;min-width:66px;flex-shrink:0}
+.history-remove svg{width:17px;height:17px}
+@media(max-width:540px){.history-item{display:grid;grid-template-columns:26px minmax(0,1fr) auto;column-gap:10px;row-gap:3px;padding:16px 14px}.history-remove{grid-column:2/4;justify-self:end;min-height:38px}.history-duration{font-size:11px}.history-tick{width:26px;height:30px}.session-buttons{gap:9px}.session-buttons button{min-height:46px}.session-bar .session-progress{font-size:10px}.ongoing-workout{padding:12px;gap:10px}.ongoing-workout .button{font-size:9px}.ongoing-workout strong{font-size:11px}}
 .done-exercise{display:flex;align-items:center;gap:8px;min-height:46px;font-size:10px;color:var(--pink);background:var(--surface2);border:1px solid var(--line);padding:10px 12px;margin-top:15px;text-align:left}
 .done-exercise svg{width:19px;height:19px}.done-exercise.checked{background:var(--wine-soft);border-color:var(--pink);color:var(--pink)}
 .rest-button{display:flex;align-items:center;gap:7px;min-height:44px;margin-top:8px;padding:0 3px;font-size:10px;color:var(--cyan);background:transparent}.rest-button svg{width:16px;height:16px}
@@ -258,3 +294,7 @@ input::placeholder,textarea::placeholder{color:var(--muted);opacity:.8}textarea{
 @media(max-width:699px){.header-actions .app-install-button{min-width:70px;padding:6px;font-size:10px}.header-actions .app-install-button svg{width:13px;height:13px}}
 @media(max-width:359px){.header-actions .app-install-button{min-width:63px;font-size:9px;padding:5px}.header-actions .app-install-button svg{width:12px;height:12px}}
 .player-seek input,.player-volume input{min-height:18px;height:18px;margin:0;border-radius:0;background:transparent;box-shadow:none}
+
+.music-status.is-loading::before{content:'';display:inline-block;width:10px;height:10px;margin-right:7px;vertical-align:-1px;border:2px solid var(--line);border-top-color:var(--cyan);border-radius:50%;animation:music-wait .8s linear infinite}
+@keyframes music-wait{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.music-status.is-loading::before{animation:none}}

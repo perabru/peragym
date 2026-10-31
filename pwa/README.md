@@ -7,13 +7,13 @@ HTML, CSS e JavaScript com IndexedDB local. A publicação atual é [GitHub Page
 - Criar, editar e excluir fichas; registrar séries, repetições, cargas e descanso.
 - Histórico de treinos e gráficos de cargas e peso corporal.
 - Temas claro e escuro, instalação Android/iPhone e treinos offline.
-- Cadastro, login com senha e banco cifrado separado por perfil local.
+- Uso sem cadastro e perfil local com senha opcional, com bancos separados.
 - Desbloqueio pelo dispositivo com WebAuthn PRF quando disponível; senha como alternativa.
 - Importação explícita dos treinos da versão anterior e backup JSON dos registros e dos oito links recentes de música.
 - Player único para links do YouTube Music e Spotify, com controles conforme o serviço.
 - Autorização Spotify PKCE e SDK; autorização Google para playlists e vídeos da API YouTube, com Client IDs configurados.
 - Loading independente do módulo principal, recuperação de falhas e instalação direta.
-- Pix opcional de R$ 1,99, sem bloqueio para instalar ou usar.
+- Pix opcional de R$ 1,99 no início do site, com QR Code e copia e cola; instalação e uso livres.
 
 ## Build estático
 
@@ -31,6 +31,8 @@ O manifesto, o escopo do service worker, os recursos locais e a instalação usa
 `server/worker.js`, `scripts/build.sh`, `db/` e `drizzle/` são da hospedagem anterior. O build do GitHub Pages não os publica nem depende deles. As tabelas antigas não são alteradas.
 
 ## Perfis e banco local
+
+O modo sem cadastro usa `peragym-guest-v1`, separado dos perfis e do banco legado. Os registros são cifrados com uma CryptoKey local não extraível; como a chave permanece disponível no aparelho, esse modo não exige senha e pode ser aberto por quem tiver acesso ao aplicativo. Criar um perfil com senha é opcional.
 
 Cada perfil tem um vault AES-GCM em IndexedDB. A senha não é gravada: PBKDF2 deriva a chave usada para abrir o envelope da chave aleatória do perfil. O desbloqueio mantém essa chave apenas em memória. Perfis e dados não são enviados a um servidor. O cadastro começa vazio; a importação dos treinos anteriores é explícita e preserva o banco original.
 

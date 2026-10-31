@@ -1,6 +1,6 @@
 /* Personal records live only in the unlocked encrypted profile; legacy IndexedDB is read-only. */
-import {parseMusicLink} from './music-links.js?v=3.4.0';
-import {localAccount} from './local-account.js?v=3.4.0';
+import {parseMusicLink} from './music-links.js?v=3.5.0';
+import {localAccount} from './local-account.js?v=3.5.0';
 
 const LEGACY_DB_NAME = 'peragym-local';
 const LEGACY_STORES = ['workouts', 'sessions', 'settings', 'loadHistory', 'bodyWeights'];
@@ -142,6 +142,16 @@ export async function finishWorkout(input) {
     const session = {id:uid(),workoutId:w.id,workoutName:w.name,completedAt:Date.now(),duration};
     data.sessions.push(session); data.activeSession = null;
     return {id:session.id};
+  });
+}
+export async function deleteSession(id) {
+  if (!validId(id)) invalid('O identificador do registro de treino é inválido.');
+  return localAccount.mutateData(data => {
+    requireSnapshot(data);
+    const index = data.sessions.findIndex(session => session.id === id);
+    if (index < 0) invalid('O registro de treino não foi encontrado neste perfil.');
+    data.sessions.splice(index, 1);
+    return {ok:true};
   });
 }
 export async function setSetting(key, value) {

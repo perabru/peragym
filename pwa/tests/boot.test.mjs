@@ -210,7 +210,7 @@ test('an explicit app boot failure provides recovery and retains all stored data
 });
 
 test('failed local application modules are caught even before their JavaScript can dispatch an event', () => {
-  for (const file of ['app.js', 'db.js', 'charts.js', 'music-links.js', 'music-player.js', 'local-account.js', 'local-auth-ui.js', 'local-biometric.js', 'youtube-account.js', 'spotify-account.js', 'spotify-playback.js']) {
+  for (const file of ['app.js', 'db.js', 'charts.js', 'music-links.js', 'music-player.js', 'local-account.js', 'local-auth-ui.js', 'local-biometric.js', 'youtube-account.js', 'spotify-account.js', 'spotify-playback.js', 'spotify-return.js', 'workout-session.js', 'operation-loading.js']) {
     const h = bootHarness();
     h.resourceError(new URL(`${file}?v=3.2.0`, appUrl).href);
     assertRecovery(h);

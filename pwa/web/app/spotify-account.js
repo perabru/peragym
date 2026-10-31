@@ -6,6 +6,8 @@ const PENDING_KEY = 'peragym.spotify.pkce.v1';
 const PENDING_TTL = 10 * 60 * 1000;
 const TOKEN_MARGIN = 30 * 1000;
 const REQUEST_TIMEOUT = 12 * 1000;
+const POPUP_CALLBACK = 'peragym:spotify:callback';
+const POPUP_ACK = 'peragym:spotify:ack';
 const SCOPES = ['streaming','user-read-private','user-read-email','playlist-read-private','playlist-read-collaborative','user-modify-playback-state'];
 const CLIENT_ID = /^[a-fA-F0-9]{32}$/;
 const ID = /^[A-Za-z0-9]{22}$/;
@@ -64,7 +66,7 @@ export function createSpotifyAccount({clientId='',redirectUri='',onChange}={}) {
   let config=null,configurationError;
   try{config=validateConfiguration(clientId,redirectUri,browser);}catch(error){configurationError=error?.name==='SpotifyAccountError'?error.message:'O endereço de retorno do Spotify não foi configurado corretamente.';}
   let accessToken=null,refreshToken=null,expiresAt=0,profile=null,lastError=configurationError;
-  let generation=0,refreshing=null,completing=null,blockedUntil=0;
+  let generation=0,refreshing=null,completing=null,blockedUntil=0,popupAttempt=null;
   const pendingRequests=new Set();
 
   function getState() {
@@ -92,15 +94,30 @@ export function createSpotifyAccount({clientId='',redirectUri='',onChange}={}) {
   function abortRequests() {
     for(const pending of pendingRequests){pending.reason='disconnect';pending.controller.abort();}
   }
+  function stopPopupListeners(attempt) {
+    clearTimeout(attempt.deadline);clearInterval(attempt.poll);
+    browser.removeEventListener?.('message',attempt.listener);
+  }
+  function finishPopup(attempt,result) {
+    if(!attempt||attempt.settled)return;
+    attempt.settled=true;stopPopupListeners(attempt);
+    if(popupAttempt===attempt)popupAttempt=null;
+    if(pendingRead()?.state===attempt.state)pendingRemove();
+    try{attempt.window.close();}catch{}
+    attempt.resolve({...result,mode:'popup'});
+  }
+  function cancelPopup(message='A conexão Spotify foi encerrada.') {
+    if(popupAttempt)finishPopup(popupAttempt,{handled:true,connected:false,error:message});
+  }
   function disconnect() {
-    generation++;abortRequests();forgetTokens();pendingRemove();refreshing=null;lastError=configurationError;blockedUntil=0;notify();
+    generation++;cancelPopup();abortRequests();forgetTokens();pendingRemove();refreshing=null;completing=null;lastError=configurationError;blockedUntil=0;notify();
   }
   function validatePending(pending,returned,current) {
     const now=Date.now();
     if(!config||!pending||typeof pending!=='object'||!STATE.test(pending.state)||!VERIFIER.test(pending.verifier)
       ||!STATE.test(returned)||!sameState(pending.state,returned)
       ||pending.clientId!==config.clientId||pending.redirectUri!==config.redirectUri||pending.origin!==config.origin
-      ||current.protocol!=='https:'||current.origin!==config.origin||current.pathname!==config.path
+      ||current.protocol!=='https:'||current.origin!==config.origin||current.pathname!==config.path||current.username||current.password
       ||!Number.isFinite(pending.createdAt)||!Number.isFinite(pending.expiresAt)
       ||pending.createdAt>now||pending.expiresAt!==pending.createdAt+PENDING_TTL||now>=pending.expiresAt) {
       throw problem('Esta autorização Spotify expirou ou não corresponde a esta aba. Toque em Conectar Spotify e tente novamente.');
@@ -187,38 +204,117 @@ export function createSpotifyAccount({clientId='',redirectUri='',onChange}={}) {
     const token=await getAccessToken();assertCurrent(run);
     return requestJSON(url,{method:'GET',headers:{Authorization:`Bearer ${token}`,Accept:'application/json'}},run);
   }
+  function beginConnection() {
+    const run=++generation;cancelPopup('Uma nova conexão Spotify foi iniciada.');abortRequests();forgetTokens();
+    refreshing=null;completing=null;pendingRemove();lastError=null;notify();return run;
+  }
+  function freshPKCE() {
+    const crypto=browser.crypto||globalThis.crypto;
+    if(!crypto?.getRandomValues||!crypto?.subtle)throw problem('Este navegador não oferece a conexão segura necessária. Use um navegador atualizado em HTTPS.');
+    return {crypto,verifier:base64url(crypto.getRandomValues(new Uint8Array(64))),state:base64url(crypto.getRandomValues(new Uint8Array(32)))};
+  }
+  async function prepareAuthorization(run,{crypto,verifier,state}) {
+    const challenge=base64url(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(verifier))));
+    assertCurrent(run);
+    const createdAt=Date.now(),pending={clientId:config.clientId,redirectUri:config.redirectUri,origin:config.origin,state,verifier,createdAt,expiresAt:createdAt+PENDING_TTL};
+    const serialized=JSON.stringify(pending);
+    try{
+      browser.sessionStorage.setItem(PENDING_KEY,serialized);
+      if(browser.sessionStorage.getItem(PENDING_KEY)!==serialized)throw new Error('storage');
+    }catch{pendingRemove();throw problem('O navegador precisa permitir dados temporários nesta aba para conectar ao Spotify.');}
+    const url=new URL(AUTHORIZE);
+    for(const [key,value]of Object.entries({response_type:'code',client_id:config.clientId,redirect_uri:config.redirectUri,scope:SCOPES.join(' '),state,code_challenge_method:'S256',code_challenge:challenge}))url.searchParams.set(key,value);
+    assertCurrent(run);return {url,pending,serialized};
+  }
   async function connect() {
     if(!config){lastError=configurationError;notify();throw problem(lastError);}
-    const run=++generation;abortRequests();forgetTokens();refreshing=null;pendingRemove();lastError=null;notify();
-    try{
-      const crypto=browser.crypto||globalThis.crypto;
-      if(!crypto?.getRandomValues||!crypto?.subtle)throw problem('Este navegador não oferece a conexão segura necessária. Use um navegador atualizado em HTTPS.');
-      const verifier=base64url(crypto.getRandomValues(new Uint8Array(64)));
-      const state=base64url(crypto.getRandomValues(new Uint8Array(32)));
-      const challenge=base64url(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(verifier))));
-      assertCurrent(run);
-      const createdAt=Date.now(),pending={clientId:config.clientId,redirectUri:config.redirectUri,origin:config.origin,state,verifier,createdAt,expiresAt:createdAt+PENDING_TTL};
-      try{
-        browser.sessionStorage.setItem(PENDING_KEY,JSON.stringify(pending));
-        if(browser.sessionStorage.getItem(PENDING_KEY)!==JSON.stringify(pending))throw new Error('storage');
-      }catch{pendingRemove();throw problem('O navegador precisa permitir dados temporários nesta aba para conectar ao Spotify.');}
-      const url=new URL(AUTHORIZE);
-      for(const [key,value]of Object.entries({response_type:'code',client_id:config.clientId,redirect_uri:config.redirectUri,scope:SCOPES.join(' '),state,code_challenge_method:'S256',code_challenge:challenge}))url.searchParams.set(key,value);
-      assertCurrent(run);browser.location.assign(url.href);
-    }catch(error){if(run===generation)pendingRemove();errorState(error,run);throw error;}
+    const run=beginConnection();
+    try{const {url}=await prepareAuthorization(run,freshPKCE());assertCurrent(run);browser.location.assign(url.href);}
+    catch(error){if(run===generation)pendingRemove();errorState(error,run);throw error;}
   }
-  function completeRedirect() {
+  // Call directly from a click: open the window before the first asynchronous PKCE digest.
+  function connectPopup() {
+    if(!config){lastError=configurationError;notify();return Promise.reject(problem(lastError));}
+    const run=beginConnection();let fields,popup;
+    try{
+      fields=freshPKCE();
+      try{popup=browser.open?.('about:blank',`peragym-spotify-auth-${fields.state}`,'popup=yes,width=520,height=760');}catch{}
+    }catch(error){errorState(error,run);return Promise.reject(error);}
+    if(!popup||popup.closed||typeof browser.addEventListener!=='function'||typeof browser.removeEventListener!=='function') {
+      try{popup?.close();}catch{}
+      return (async()=>{
+        try {
+          const {url}=await prepareAuthorization(run,fields);assertCurrent(run);
+          const warning='O navegador bloqueou a janela do Spotify. A conexão abrirá nesta aba; ao voltar, seu perfil local pode pedir a senha novamente.';
+          lastError=warning;notify();browser.location.assign(url.href);
+          return {handled:false,connected:false,mode:'redirect',redirected:true,warning};
+        }catch(error){if(run===generation)pendingRemove();errorState(error,run);throw error;}
+      })();
+    }
+    return new Promise(resolve=>{
+      const attempt={window:popup,state:fields.state,run,resolve,settled:false,accepted:false,listener:null,deadline:null,poll:null};
+      popupAttempt=attempt;
+      const failAttempt=message=>{
+        if(popupAttempt!==attempt||attempt.settled)return;
+        if(run===generation){lastError=message;notify();}
+        finishPopup(attempt,{handled:true,connected:false,error:message});
+      };
+      attempt.listener=event=>{
+        if(attempt.settled||attempt.accepted||popupAttempt!==attempt||run!==generation
+          ||event.origin!==config.origin||event.source!==popup||!event.data||event.data.type!==POPUP_CALLBACK
+          ||typeof event.data.callbackUrl!=='string'||event.data.callbackUrl.length>8192||UNSAFE_URL.test(event.data.callbackUrl)
+          ||hasUserInfo(event.data.callbackUrl))return;
+        let callback;
+        try {
+          callback=new URL(event.data.callbackUrl);
+          const states=callback.searchParams.getAll('state');
+          if(states.length!==1||!sameState(states[0],attempt.state))return;
+          validatePending(pendingRead(),states[0],callback);
+        }catch{return;}
+        attempt.accepted=true;stopPopupListeners(attempt);
+        // Acknowledge only the exact popup and origin, never broadcast or send tokens/verifiers.
+        try{popup.postMessage({type:POPUP_ACK,state:attempt.state},config.origin);}catch{}
+        const completion=completeRedirect({callbackUrl:callback.href});
+        completion.then(result=>finishPopup(attempt,result),error=>{
+          errorState(error);finishPopup(attempt,{handled:true,connected:false,error:lastError});
+        });
+      };
+      browser.addEventListener('message',attempt.listener);
+      attempt.deadline=setTimeout(()=>failAttempt('A autorização Spotify expirou. Toque em Conectar Spotify e tente novamente.'),PENDING_TTL);
+      attempt.poll=setInterval(()=>{
+        if(attempt.accepted||attempt.settled)return;
+        try{if(popup.closed)failAttempt('A janela do Spotify foi fechada. Conecte novamente quando quiser.');}catch{}
+      },500);
+      prepareAuthorization(run,fields).then(({url,serialized})=>{
+        if(attempt.settled||popupAttempt!==attempt)return;
+        assertCurrent(run);
+        // A same-origin temporary copy lets the callback continue in its own tab if opener/ACK is lost.
+        // No access/refresh token or unlocked local profile is copied.
+        try{popup.sessionStorage.setItem(PENDING_KEY,serialized);}catch{}
+        if(popup.closed){failAttempt('A janela do Spotify foi fechada. Conecte novamente quando quiser.');return;}
+        popup.location.replace(url.href);
+      }).catch(error=>{
+        errorState(error,run);finishPopup(attempt,{handled:true,connected:false,error:run===generation?lastError:'A conexão Spotify foi encerrada.'});
+      });
+    });
+  }
+  function completeRedirect({callbackUrl}={}) {
     if(completing)return completing;
     let current;
-    try{current=new URL(browser.location.href);}catch{return Promise.resolve({handled:false,connected:getState().connected});}
+    if(callbackUrl!==undefined&&(typeof callbackUrl!=='string'||callbackUrl.length>8192||UNSAFE_URL.test(callbackUrl)||hasUserInfo(callbackUrl))) {
+      return Promise.resolve({handled:true,connected:false,error:'O retorno do Spotify é inválido. Conecte novamente.'});
+    }
+    try{current=new URL(callbackUrl===undefined?browser.location.href:callbackUrl);}catch{return Promise.resolve({handled:false,connected:getState().connected});}
     if(!['code','state','error'].some(key=>current.searchParams.has(key)))return Promise.resolve({handled:false,connected:getState().connected});
     const codes=current.searchParams.getAll('code'),states=current.searchParams.getAll('state'),errors=current.searchParams.getAll('error');
     const pending=pendingRead();pendingRemove();
     // Remove only OAuth parameters, synchronously, before any fetch or other await.
-    const clean=new URL(current);
-    for(const key of ['code','state','error'])clean.searchParams.delete(key);
-    try{browser.history.replaceState(browser.history.state??null,'',clean.pathname+clean.search+clean.hash);}
-    catch{forgetTokens();lastError='Não foi possível limpar o retorno do Spotify. Feche esta aba e conecte novamente.';notify();return Promise.resolve({handled:true,connected:false,error:lastError});}
+    if(callbackUrl===undefined) {
+      const clean=new URL(current);
+      for(const key of ['code','state','error'])clean.searchParams.delete(key);
+      try{browser.history.replaceState(browser.history.state??null,'',clean.pathname+clean.search+clean.hash);}
+      catch{forgetTokens();lastError='Não foi possível limpar o retorno do Spotify. Feche esta aba e conecte novamente.';notify();return Promise.resolve({handled:true,connected:false,error:lastError});}
+    }
     const run=++generation;abortRequests();forgetTokens();refreshing=null;
     const completion=(async()=>{
       try{
@@ -275,5 +371,5 @@ export function createSpotifyAccount({clientId='',redirectUri='',onChange}={}) {
   // Remove stale in-progress authorizations without retaining any credentials.
   const pending=pendingRead();
   if(pending&&(!Number.isFinite(pending.expiresAt)||Date.now()>=pending.expiresAt))pendingRemove();
-  return {getState,connect,completeRedirect,disconnect,getPlaylists,getAccessToken};
+  return {getState,connect,connectPopup,completeRedirect,disconnect,getPlaylists,getAccessToken};
 }
