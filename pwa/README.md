@@ -9,6 +9,7 @@ HTML, CSS e JavaScript com IndexedDB local. A publicação atual é [GitHub Page
 - Temas claro e escuro, instalação Android/iPhone e treinos offline.
 - Uso sem cadastro e perfil local com senha opcional, com bancos separados.
 - Desbloqueio pelo dispositivo com WebAuthn PRF quando disponível; senha como alternativa.
+- Recuperação local da senha com usuário e código aleatório guardado fora do aplicativo.
 - Importação explícita dos treinos da versão anterior e backup JSON dos registros e dos oito links recentes de música.
 - Player único para links do YouTube Music e Spotify, com controles conforme o serviço.
 - Autorização Spotify PKCE e SDK; autorização Google para playlists e vídeos da API YouTube, com Client IDs configurados.
@@ -36,7 +37,9 @@ O modo sem cadastro usa `peragym-guest-v1`, separado dos perfis e do banco legad
 
 Cada perfil tem um vault AES-GCM em IndexedDB. A senha não é gravada: PBKDF2 deriva a chave usada para abrir o envelope da chave aleatória do perfil. O desbloqueio mantém essa chave apenas em memória. Perfis e dados não são enviados a um servidor. O cadastro começa vazio; a importação dos treinos anteriores é explícita e preserva o banco original.
 
-A biometria requer WebAuthn com extensão PRF, além da verificação do usuário no aparelho. Sem suporte, permanece disponível o login com senha. O navegador decide se oferece digital, Face ID ou PIN; o PeraGym não recebe dados biométricos. Apagar os dados do site remove contas e treinos locais. Não há recuperação por e-mail. Exporte os treinos antes de trocar de aparelho; o backup JSON é legível.
+A biometria requer WebAuthn com extensão PRF, além da verificação do usuário no aparelho. Sem suporte, permanece disponível o login com senha. O navegador decide se oferece digital, Face ID ou PIN; o PeraGym não recebe dados biométricos.
+
+**Esqueci minha senha** exige o usuário e um código de recuperação aleatório gerado previamente e guardado pelo usuário fora do app. A redefinição funciona no mesmo aparelho, com o banco local preservado. Contas antigas precisam ativar o código em **Ajustes** enquanto estão logadas. Não há recuperação por e-mail se senha e código forem perdidos. Apagar os dados do site remove contas e treinos; o código não restaura um banco apagado. Exporte os treinos antes de trocar de aparelho; o backup JSON é legível.
 
 ## Música
 

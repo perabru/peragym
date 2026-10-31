@@ -17,7 +17,9 @@ Abra uma vez com internet para preparar os treinos offline. Em **Ajustes**, salv
 
 O modo sem cadastro salva os treinos neste aparelho e pode ser aberto por quem tiver acesso ao aplicativo. Ele usa um banco separado dos perfis com senha. Cadastro e senha pertencem ao PeraGym neste navegador, sem conta remota ou sincronização. A senha deriva uma chave com PBKDF2; o banco guarda os treinos cifrados por perfil. A chave do perfil desbloqueado fica somente em memória. A biometria depende de WebAuthn com PRF e verificação do usuário; quando indisponível, use a senha. O aparelho pode oferecer digital, Face ID ou PIN, conforme sua configuração. O aplicativo não recebe a impressão digital.
 
-Os treinos da versão anterior são preservados no banco original e podem ser copiados explicitamente para um perfil. Guardar um backup continua necessário: apagar os dados do navegador remove também as contas locais. Não há recuperação por e-mail. O backup JSON dos treinos exportados contém dados legíveis e deve ser guardado em local privado.
+A recuperação de senha usa um código aleatório que você guarda fora do aplicativo. Em **Esqueci minha senha**, informe o usuário e esse código para definir outra senha no mesmo aparelho, com os dados do navegador preservados. Contas antigas ativam o código em **Ajustes** enquanto estão logadas. Se perder senha e código ou apagar os dados do navegador, não há recuperação por e-mail.
+
+Os treinos da versão anterior são preservados no banco original e podem ser copiados explicitamente para um perfil. Guardar um backup continua necessário: apagar os dados do navegador remove também as contas locais. O backup JSON dos treinos exportados contém dados legíveis e deve ser guardado em local privado.
 
 ## Música e Pix
 

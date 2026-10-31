@@ -15,7 +15,7 @@ const flush=async()=>{for(let n=0;n<12;n++)await Promise.resolve();};
 
 /** Execute the production handle/detailView with mocked boundaries, not copied logic. */
 async function harness(t,{activeSession=null,confirm=true}={}){
- let now=1_800_000_100_000,model=initialData(),renderCount=0;
+ let now=1_800_000_100_000,model=initialData(),renderCount=0,pendingRecovery=false,authRenderCount=0;
  model.activeSession=clone(activeSession);
  const calls=[],notices=[],confirmations=[],playerCalls=[],loadingCalls=[],editorEvents=[],deferred=new Map(),timers=new Map(),elements=new Map();
  let nextTimer=0;
@@ -49,7 +49,7 @@ async function harness(t,{activeSession=null,confirm=true}={}){
  const context={console,URL,URLSearchParams,structuredClone,Date:class Clock extends Date{constructor(...args){super(...(args.length?args:[now]));}static now(){return now;}},
   document,location:new URL('https://perabru.github.io/peragym/docs/app/'),navigator:{onLine:true},sessionStorage:{getItem(){return null;},setItem(){},removeItem(){}},localAccount,store,
   createOperationLoading:()=>({run:(message,task)=>{loadingCalls.push(message);return task();},start:()=>()=>{},clear(){},track:(_message,promise)=>promise}),
-  createLocalBiometric:()=>({}),createLocalAuthUI:()=>({render(){},settingsMarkup:()=>'',bindSettings(){},reset:async()=>{},initialize:async()=>{}}),
+  createLocalBiometric:()=>({}),createLocalAuthUI:()=>({hasPendingRecovery:()=>pendingRecovery,render(){authRenderCount++;},settingsMarkup:()=>'',bindSettings(){},reset:async()=>{},initialize:async()=>{}}),
   createMusicPlayer:()=>({close(){playerCalls.push({name:'close'});},load:async value=>{playerCalls.push({name:'load',value:clone(value)});},openAccount:(provider,profile)=>{playerCalls.push({name:'openAccount',provider,profile:clone(profile)});},setMessage:message=>{playerCalls.push({name:'setMessage',message});}}),createYouTubeAccount:()=>({}),createSpotifyAccount:()=>({}),parseMusicLink,renderChart:()=>'',filterRange:points=>points,summarize:()=>({count:0,last:null}),
   setInterval:(fn,ms)=>{const id=++nextTimer;timers.set(id,{fn,ms});return id;},clearInterval:id=>timers.delete(id),setTimeout:(fn,ms)=>{const id=++nextTimer;timers.set(id,{fn,ms});return id;},clearTimeout:id=>timers.delete(id),
   __showEditor:value=>{editorEvents.push({workout:clone(value),active:clone(vmContext.__appTest.getState().active),saved:clone(model.activeSession)});element('#editor').open=true;},
@@ -66,10 +66,10 @@ async function harness(t,{activeSession=null,confirm=true}={}){
   }
  }
  source=source.replace(/^import\s+[^;]+;\s*$/gm,'').replaceAll('import.meta.url',JSON.stringify(APP_URL.href)).replace(/\ninit\(\);?\s*$/,'\n');
- source+='\nrender=globalThis.__render;notify=globalThis.__notify;ask=globalThis.__ask;if(typeof showWorkoutEditor==="function")showWorkoutEditor=globalThis.__showEditor;globalThis.__appTest={handle,card,detailView,historyView,openEditor,saveEditor,setDraft(value){readDraft=()=>structuredClone(value);},activateMusic,lockApp,setAccounts(spotify,youtube){spotifyAccount=spotify;youtubeAccount=youtube;},setState(value){if("active"in value)active=structuredClone(value.active);if(value.data)data=structuredClone(value.data);if("selectedId"in value)selectedId=value.selectedId;if(value.page)page=value.page;},getState(){return structuredClone({active,data,selectedId,page,handling,restUntil,spotifyPlaylists,youtubePlaylists,youtubeTracks});},updateSessionTimer};';
+ source+='\nconst productionRender=render;render=globalThis.__render;notify=globalThis.__notify;ask=globalThis.__ask;if(typeof showWorkoutEditor==="function")showWorkoutEditor=globalThis.__showEditor;globalThis.__appTest={nav,hasLocalAccess,productionRender,handle,card,detailView,historyView,openEditor,saveEditor,setDraft(value){readDraft=()=>structuredClone(value);},activateMusic,lockApp,setAccounts(spotify,youtube){spotifyAccount=spotify;youtubeAccount=youtube;},setState(value){if("active"in value)active=structuredClone(value.active);if(value.data)data=structuredClone(value.data);if("selectedId"in value)selectedId=value.selectedId;if(value.page)page=value.page;},getState(){return structuredClone({active,data,selectedId,page,handling,restUntil,spotifyPlaylists,youtubePlaylists,youtubeTracks});},updateSessionTimer};';
  const vmContext=vm.createContext(context);vm.runInContext(source,vmContext,{filename:'production-app.js'});
  const app=vmContext.__appTest;app.setState({active:activeSession,data:model,selectedId:activeSession?.id??workout.id,page:'fichas'});
- return {app,store,calls,notices,confirmations,playerCalls,loadingCalls,editorEvents,elements,accountState:()=>clone(authState),model:()=>clone(model),renders:()=>renderCount,now:()=>now,advance:ms=>{now+=ms;},
+ return {app,store,calls,notices,confirmations,playerCalls,loadingCalls,editorEvents,elements,setRecoveryPending:value=>{pendingRecovery=value;},authRenders:()=>authRenderCount,accountState:()=>clone(authState),model:()=>clone(model),renders:()=>renderCount,now:()=>now,advance:ms=>{now+=ms;},
   deferNext(name){let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});const queue=deferred.get(name)||[];queue.push({promise});deferred.set(name,queue);return {resolve,reject};},
   sync(){app.setState({data:model});},element};
 }
@@ -275,4 +275,16 @@ test('missing workout identifiers cannot open an accidental new editor or trigge
  const env=await harness(t),before=env.model();
  for(const action of ['edit','delete'])for(const id of [undefined,'not-found'])await assert.doesNotReject(()=>env.app.handle(action,{id}));
  assert.equal(env.editorEvents.length,0);assert.deepEqual(env.model(),before);assert.equal(env.calls.some(c=>c.name==='deleteWorkout'||c.name==='setSetting'||c.name==='saveWorkout'),false);
+});
+
+
+test('pending recovery acknowledgement keeps app navigation and workout mutations locked',async t=>{
+ const env=await harness(t);env.setRecoveryPending(true);
+ assert.equal(env.accountState().unlocked,true);assert.equal(env.app.hasLocalAccess(),false);
+ env.app.nav('historico');await env.app.handle('start',{id:workout.id});
+ assert.equal(env.app.getState().page,'fichas');assert.equal(env.model().activeSession,null);assert.equal(env.calls.length,0);
+ env.app.productionRender();assert.equal(env.element('body').classList.contains('app-locked'),true);
+ assert.equal(env.element('#settings-open').disabled,true);assert.equal(env.authRenders(),1);
+ env.setRecoveryPending(false);assert.equal(env.app.hasLocalAccess(),true);
+ await env.app.handle('start',{id:workout.id});assert.equal(env.model().activeSession.id,workout.id);
 });

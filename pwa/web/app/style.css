@@ -306,3 +306,24 @@ input::placeholder,textarea::placeholder{color:var(--muted);opacity:.8}textarea{
 .detail-manage{padding:0;margin:18px 0 25px;max-width:460px}
 .editor-session-hint{margin:0 0 18px;padding:12px;border:1px solid var(--cyan);background:var(--surface2);color:var(--ink)}
 @media(max-width:360px){.workout-manage{gap:8px;padding-left:13px;padding-right:13px}.workout-manage .button{font-size:10px;gap:5px}.detail-manage{padding:0}}
+
+/* Local password recovery: credentials stay in the current view only. */
+.auth-forgot{justify-self:center;min-height:40px;padding:6px 10px;background:transparent;color:var(--cyan);font-size:12px;text-decoration:underline;text-underline-offset:3px}
+.auth-recovery-intro{font-size:13px;line-height:1.7;color:var(--muted);margin:16px 0}
+.auth-recovery-warning{font-size:11px;line-height:1.7;color:var(--pink);padding:11px 12px;background:var(--surface2);border-left:2px solid var(--pink);margin:0}
+.auth-recovery-code-label{display:grid;gap:8px;font-size:12px;font-weight:700}
+.auth-card [data-local-recovery-code],.local-recovery-dialog [data-local-recovery-code]{display:block;width:100%;min-width:0;min-height:95px;border:1px solid var(--cyan);border-radius:3px;padding:13px 10px;background:var(--bg);color:var(--ink);font:13px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.4px;user-select:all;resize:none;overflow-wrap:anywhere;word-break:break-all;white-space:pre-wrap}
+.auth-card label.auth-recovery-ack,.local-recovery-dialog label.auth-recovery-ack{display:flex;align-items:flex-start;gap:10px;font-size:12px;font-weight:500;line-height:1.65;color:var(--ink);margin:4px 0}
+.auth-recovery-ack input[type=checkbox]{width:19px;height:19px;min-width:19px;min-height:19px;flex-shrink:0;margin:1px 0 0;padding:0;accent-color:var(--pink)}
+.auth-recovery-actions{display:grid;gap:12px;margin:21px 0 3px}
+.local-recovery-card [data-local-recovery-status]{font-size:13px;line-height:1.7;margin:10px 0 17px}
+.local-recovery-card .form-hint{margin-top:14px}
+.local-recovery-dialog{width:calc(100% - 28px);max-width:510px;padding:0;background:var(--surface);color:var(--ink);border:1px solid var(--pink);border-radius:5px;box-shadow:6px 6px 0 var(--cyan);max-height:calc(100dvh - 35px)}
+.local-recovery-dialog::backdrop{background:#100b26b8;backdrop-filter:blur(4px)}
+.local-recovery-dialog-form{padding:27px;display:grid;gap:15px;max-height:calc(100dvh - 37px);overflow-y:auto;overscroll-behavior:contain}
+.local-recovery-dialog h2{font-size:22px;line-height:1.3;margin:0;color:var(--ink)}
+.local-recovery-dialog .auth-recovery-intro{margin:0}
+.local-recovery-dialog .auth-error{margin:0}
+.local-recovery-dialog .auth-recovery-actions{margin-top:8px}
+.local-recovery-dialog .button{min-height:46px}
+@media(max-width:380px){.auth-card [data-local-recovery-code],.local-recovery-dialog [data-local-recovery-code]{font-size:11px;letter-spacing:0}.local-recovery-dialog-form{padding:20px}}

@@ -1,7 +1,7 @@
 'use strict';
 
 // The app is free. Only static assets are cached; personal records stay in IndexedDB.
-const VERSION = 'peragym-pages-487e833a71ce-3.6.0';
+const VERSION = 'peragym-pages-487e833a71ce-3.7.0';
 const PUBLIC_CACHE = `${VERSION}-public`;
 const APP_CACHE = `${VERSION}-app`;
 const CACHE_PREFIX = 'peragym-pages-487e833a71ce-';

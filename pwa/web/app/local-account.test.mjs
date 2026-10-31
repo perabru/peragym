@@ -330,3 +330,158 @@ test('guest locking cancels both pending mutators and encryption without committ
   account.lock();release();await assert.rejects(()=>write,Error);
   assert.equal(account.getState().unlocked,false);assert.deepEqual(await dumpGuest(),before);
 });
+
+const recoveryPattern=/^PG-(?:[0123456789ABCDEFGHJKMNPQRSTVWXYZ]{4}-){7}[0123456789ABCDEFGHJKMNPQRSTVWXYZ]{4}$/;
+const fakeRecovery='PG-0000-0000-0000-0000-0000-0000-0000-0000';
+const deferred=()=>{let resolve;const promise=new Promise(yes=>{resolve=yes;});return {promise,resolve};};
+function patchMethod(t,object,name,value){
+ const descriptor=Object.getOwnPropertyDescriptor(object,name);Object.defineProperty(object,name,{configurable:true,writable:true,value});
+ let restored=false;const restore=()=>{if(restored)return;restored=true;if(descriptor)Object.defineProperty(object,name,descriptor);else delete object[name];};
+ t.after(restore);return restore;
+}
+
+test('recovery is explicit, requires an authenticated password profile and never becomes available for guest data',async t=>{
+ const account=setup(t);
+ for(const operation of [()=>account.getRecoveryStatus(),()=>account.createRecoveryCode()])await assert.rejects(operation,error=>error.name==='LocalAccountLocked');
+ await account.enterGuest();const guest=await dumpGuest();assert.deepEqual(await account.getRecoveryStatus(),{enabled:false});
+ await assert.rejects(()=>account.createRecoveryCode(),error=>error.name==='LocalAccountAuthError');assert.deepEqual(await dumpGuest(),guest);
+ await register(account);assert.deepEqual(await account.getRecoveryStatus(),{enabled:false});const before=await dump();account.lock();
+ await assert.rejects(()=>account.recoverPassword({username:'bruno',recoveryCode:fakeRecovery,newPassword:SECOND_PASSWORD}),error=>error.name==='LocalAccountAuthError');
+ assert.deepEqual(await dump(),before);assert.equal(account.getState().unlocked,false);assert.deepEqual(await dumpGuest(),guest);
+ await account.login('bruno',PASSWORD);assert.deepEqual(await account.getRecoveryStatus(),{enabled:false});
+});
+
+test('recovery codes contain 160 random bits and persist only profile-bound HKDF/AES envelopes, never plaintext codes',async t=>{
+ const account=setup(t),profile=await register(account);const before=await dump();
+ const code=await account.createRecoveryCode();assert.match(code,recoveryPattern);assert.equal(code.replace(/[^0-9A-Z]/g,'').slice(2).length,32);
+ const stored=await dump(),record=stored.profiles[0].recovery;
+ assert.equal(record.version,1);assert.equal(record.generation,1);assert.equal(record.kdf.name,'HKDF');assert.equal(record.kdf.hash,'SHA-256');
+ assert.equal(Buffer.from(record.kdf.salt,'base64url').byteLength,16);assert.equal(record.envelope.purpose,'recovery-key');assert.equal(record.envelope.profileId,profile.id);
+ assert.equal(Buffer.from(record.envelope.iv,'base64url').byteLength,12);assert.equal(Buffer.from(record.envelope.ciphertext,'base64url').byteLength,48);
+ assert.deepEqual(stored.vaults,before.vaults);assert.deepEqual(stored.profiles[0].kdf,before.profiles[0].kdf);
+ assert.deepEqual(stored.profiles[0].passwordEnvelope,before.profiles[0].passwordEnvelope);assert.deepEqual(await account.getRecoveryStatus(),{enabled:true});
+ for(const secret of [code,code.replaceAll('-','').slice(2),PASSWORD])assert.equal(JSON.stringify(stored).includes(secret),false);
+ assert.deepEqual(Object.keys((await account.listProfiles())[0]).sort(),['id','name','username']);
+ const rotated=await account.createRecoveryCode();assert.match(rotated,recoveryPattern);assert.notEqual(rotated,code);
+ const after=await dump();assert.equal(after.profiles[0].recovery.generation,2);assert.notEqual(after.profiles[0].recovery.kdf.salt,record.kdf.salt);assert.deepEqual(after.vaults,before.vaults);
+ account.lock();await assert.rejects(()=>account.recoverPassword({username:'bruno',recoveryCode:code,newPassword:SECOND_PASSWORD}),error=>error.name==='LocalAccountAuthError');
+ assert.deepEqual(await dump(),after);await account.login('bruno',PASSWORD);
+});
+
+test('password recovery rotates credentials atomically while preserving the exact vault and existing biometric data key',async t=>{
+ const account=setup(t),profile=await register(account),bioKey=await wrappingKey();
+ await account.mutateData(d=>{d.workouts.push({id:'w-recover',name:'Recovered private workout'});d.sessions.push({id:'s-recover',duration:125});d.loadHistory.push({id:'load-recover',value:22.5});d.bodyWeights.push({id:'body-recover',value:73.25});d.activeSession={id:'w-recover',startedAt:1000,done:[],pausedAt:3000,pausedMs:100};d.musicLinks=['https://music.youtube.com/watch?v=dQw4w9WgXcQ'];d.theme='dark';d.legacyImport={source:'peragym-local'};});
+ const data=await account.readData(),biometric=await account.wrapSessionKey(bioKey),code=await account.createRecoveryCode(),before=await dump();account.lock();
+ const result=await account.recoverPassword({username:' BRUNO ',recoveryCode:code.toLowerCase().replaceAll('-',' '),newPassword:SECOND_PASSWORD});
+ assert.deepEqual(result.profile,profile);assert.match(result.recoveryCode,recoveryPattern);assert.notEqual(result.recoveryCode,code);
+ assert.equal(account.getState().unlocked,true);assert.deepEqual(await account.readData(),data);
+ const after=await dump();assert.deepEqual(after.vaults,before.vaults);assert.notEqual(after.profiles[0].kdf.salt,before.profiles[0].kdf.salt);
+ assert.notDeepEqual(after.profiles[0].passwordEnvelope,before.profiles[0].passwordEnvelope);assert.equal(after.profiles[0].recovery.generation,2);
+ for(const secret of [code,result.recoveryCode,PASSWORD,SECOND_PASSWORD])assert.equal(JSON.stringify(after).includes(secret),false);
+ const generation=account.getState().generation;
+ await assert.rejects(()=>account.recoverPassword({username:'bruno',recoveryCode:result.recoveryCode,newPassword:PASSWORD}));assert.equal(account.getState().generation,generation);assert.equal(account.getState().unlocked,true);
+ account.lock();await assert.rejects(()=>account.login('bruno',PASSWORD),error=>error.name==='LocalAccountAuthError');assert.deepEqual(await dump(),after);
+ await assert.rejects(()=>account.recoverPassword({username:'bruno',recoveryCode:code,newPassword:PASSWORD}),error=>error.name==='LocalAccountAuthError');assert.deepEqual(await dump(),after);
+ await account.login('bruno',SECOND_PASSWORD);assert.deepEqual(await account.readData(),data);account.lock();
+ await account.unlockWithWrappedKey(profile.id,bioKey,biometric);assert.deepEqual(await account.readData(),data);account.lock();
+ const next=await account.recoverPassword({username:'bruno',recoveryCode:result.recoveryCode,newPassword:'Third-Strong-Rhythm-789!'});assert.match(next.recoveryCode,recoveryPattern);assert.deepEqual(await account.readData(),data);assert.deepEqual((await dump()).vaults,before.vaults);
+});
+
+test('wrong recovery code, wrong profile and malformed inputs cannot alter password profiles or guest records',async t=>{
+ const account=setup(t);await account.enterGuest();await account.mutateData(d=>{d.workouts.push({id:'guest-isolated',name:'Guest stays intact'});});const guest=await dumpGuest();
+ const a=await register(account,'alice');await account.mutateData(d=>{d.workouts.push({id:'alice-isolated'});});const codeA=await account.createRecoveryCode();
+ const b=await register(account,'bruno',SECOND_PASSWORD);await account.mutateData(d=>{d.workouts.push({id:'bruno-isolated'});});const codeB=await account.createRecoveryCode();account.lock();
+ const before=await dump();
+ for(const input of [{username:'bruno',recoveryCode:codeA,newPassword:PASSWORD},{username:'missing',recoveryCode:codeA,newPassword:PASSWORD},
+  {username:'alice',recoveryCode:fakeRecovery,newPassword:SECOND_PASSWORD},{username:'alice',recoveryCode:'PG-invalid',newPassword:SECOND_PASSWORD},
+  {username:'alice',recoveryCode:codeA,newPassword:'short'}]){
+  await assert.rejects(()=>account.recoverPassword(input));assert.deepEqual(await dump(),before);assert.deepEqual(await dumpGuest(),guest);assert.equal(account.getState().unlocked,false);
+ }
+ const recovered=await account.recoverPassword({username:'alice',recoveryCode:codeA,newPassword:SECOND_PASSWORD});assert.equal(recovered.profile.id,a.id);
+ assert.deepEqual((await account.readData()).workouts,[{id:'alice-isolated'}]);assert.deepEqual((await dump()).vaults,before.vaults);account.lock();
+ await account.login('bruno',SECOND_PASSWORD);assert.equal(account.getState().profileId,b.id);assert.deepEqual((await account.readData()).workouts,[{id:'bruno-isolated'}]);
+ assert.deepEqual((await dump()).profiles.find(p=>p.id===b.id),before.profiles.find(p=>p.id===b.id));assert.deepEqual(await dumpGuest(),guest);assert.equal(JSON.stringify(await dump()).includes(codeB),false);
+});
+
+test('crypto wrapping failures never enable a code or replace existing recovery/password metadata',async t=>{
+ const account=setup(t);await register(account);const initial=await dump(),subtle=webcrypto.subtle;
+ let restore=patchMethod(t,subtle,'wrapKey',async()=>{throw new DOMException('Synthetic wrap failure','OperationError');});
+ await assert.rejects(()=>account.createRecoveryCode());assert.deepEqual(await dump(),initial);assert.deepEqual(await account.getRecoveryStatus(),{enabled:false});restore();
+ const code=await account.createRecoveryCode(),before=await dump();account.lock();
+ restore=patchMethod(t,subtle,'wrapKey',async()=>{throw new DOMException('Synthetic wrap failure','OperationError');});
+ await assert.rejects(()=>account.recoverPassword({username:'bruno',recoveryCode:code,newPassword:SECOND_PASSWORD}));assert.equal(account.getState().unlocked,false);assert.deepEqual(await dump(),before);restore();
+ await account.login('bruno',PASSWORD);assert.deepEqual(await account.getRecoveryStatus(),{enabled:true});account.lock();
+ await account.recoverPassword({username:'bruno',recoveryCode:code,newPassword:SECOND_PASSWORD});assert.deepEqual((await dump()).vaults,before.vaults);
+});
+
+test('failed metadata storage rolls back both newly generated recovery codes and password resets',async t=>{
+ const account=setup(t);await register(account);const initial=await dump();
+ const Store=require('fake-indexeddb').IDBObjectStore,put=Store.prototype.put;
+ const failPut=function(value,...args){if(this.name==='profiles'&&value.recovery)throw new DOMException('Synthetic quota failure','QuotaExceededError');return put.call(this,value,...args);};
+ let restore=patchMethod(t,Store.prototype,'put',failPut);await assert.rejects(()=>account.createRecoveryCode());assert.deepEqual(await dump(),initial);restore();
+ const code=await account.createRecoveryCode(),before=await dump();account.lock();restore=patchMethod(t,Store.prototype,'put',failPut);
+ await assert.rejects(()=>account.recoverPassword({username:'bruno',recoveryCode:code,newPassword:SECOND_PASSWORD}));assert.deepEqual(await dump(),before);assert.equal(account.getState().unlocked,false);restore();
+ await account.login('bruno',PASSWORD);account.lock();await account.recoverPassword({username:'bruno',recoveryCode:code,newPassword:SECOND_PASSWORD});assert.deepEqual((await dump()).vaults,before.vaults);
+});
+
+test('a stale recovery-code rotation cannot overwrite a password reset committed by another instance',async t=>{
+ const account=setup(t);await register(account);const oldCode=await account.createRecoveryCode(),reset=createLocalAccount(),before=await dump();
+ const subtle=webcrypto.subtle,wrap=subtle.wrapKey.bind(subtle),entered=deferred(),release=deferred();let held=false;
+ const restore=patchMethod(t,subtle,'wrapKey',async(...args)=>{
+  if(!held&&new TextDecoder().decode(args[3].additionalData).includes('recovery-key')){held=true;entered.resolve();await release.promise;}
+  return wrap(...args);
+ });
+ const stale=account.createRecoveryCode(),rejected=assert.rejects(stale,error=>error.name==='LocalAccountConflict');await entered.promise;
+ const recovered=await reset.recoverPassword({username:'bruno',recoveryCode:oldCode,newPassword:SECOND_PASSWORD}),committed=await dump();
+ release.resolve();await rejected;restore();assert.deepEqual(await dump(),committed);assert.deepEqual(committed.vaults,before.vaults);
+ assert.match(recovered.recoveryCode,recoveryPattern);assert.equal(committed.profiles[0].recovery.generation,2);reset.lock();account.lock();
+ await assert.rejects(()=>account.login('bruno',PASSWORD),error=>error.name==='LocalAccountAuthError');await account.login('bruno',SECOND_PASSWORD);
+});
+
+test('concurrent password recovery has one metadata CAS winner and never replaces the data vault',async t=>{
+ const account=setup(t);await register(account);const code=await account.createRecoveryCode(),before=await dump();account.lock();
+ const a=createLocalAccount(),b=createLocalAccount(),subtle=webcrypto.subtle,wrap=subtle.wrapKey.bind(subtle),both=deferred(),release=deferred();let entered=0;
+ const restore=patchMethod(t,subtle,'wrapKey',async(...args)=>{
+  if(new TextDecoder().decode(args[3].additionalData).includes('password-key')){entered++;if(entered===2)both.resolve();await release.promise;}
+  return wrap(...args);
+ });
+ const promises=[a.recoverPassword({username:'bruno',recoveryCode:code,newPassword:SECOND_PASSWORD}),b.recoverPassword({username:'bruno',recoveryCode:code,newPassword:'Third-Strong-Rhythm-789!'})];
+ const settled=Promise.allSettled(promises);await both.promise;release.resolve();const outcomes=await settled;restore();
+ assert.equal(outcomes.filter(result=>result.status==='fulfilled').length,1);assert.equal(outcomes.find(result=>result.status==='rejected').reason.name,'LocalAccountConflict');
+ const winner=outcomes.findIndex(result=>result.status==='fulfilled'),stored=await dump();assert.deepEqual(stored.vaults,before.vaults);assert.equal(stored.profiles[0].recovery.generation,2);
+ a.lock();b.lock();await account.login('bruno',winner===0?SECOND_PASSWORD:'Third-Strong-Rhythm-789!');account.lock();
+ await assert.rejects(()=>account.recoverPassword({username:'bruno',recoveryCode:code,newPassword:PASSWORD}),error=>error.name==='LocalAccountAuthError');assert.deepEqual(await dump(),stored);
+});
+
+test('locking cancels recovery generation and password recovery before any credentials commit',async t=>{
+ const account=setup(t);await register(account);let before=await dump();
+ const early=account.createRecoveryCode();account.lock();await assert.rejects(early,error=>error.name==='LocalAccountCancelled');assert.deepEqual(await dump(),before);
+ await account.login('bruno',PASSWORD);const code=await account.createRecoveryCode();before=await dump();account.lock();
+ const immediate=account.recoverPassword({username:'bruno',recoveryCode:code,newPassword:SECOND_PASSWORD});account.lock();await assert.rejects(immediate,error=>error.name==='LocalAccountCancelled');assert.deepEqual(await dump(),before);
+ const subtle=webcrypto.subtle,wrap=subtle.wrapKey.bind(subtle),entered=deferred(),release=deferred();let held=false;
+ const restore=patchMethod(t,subtle,'wrapKey',async(...args)=>{if(!held){held=true;entered.resolve();await release.promise;}return wrap(...args);});
+ const pending=account.recoverPassword({username:'bruno',recoveryCode:code,newPassword:SECOND_PASSWORD}),rejected=assert.rejects(pending,error=>error.name==='LocalAccountCancelled');await entered.promise;
+ account.lock();release.resolve();await rejected;restore();assert.deepEqual(await dump(),before);assert.equal(account.getState().unlocked,false);
+});
+
+test('lock aborts a pending metadata transaction even after its profile put has been queued',async t=>{
+ const account=setup(t);await register(account);const before=await dump();
+ const Store=require('fake-indexeddb').IDBObjectStore,put=Store.prototype.put;
+ const restore=patchMethod(t,Store.prototype,'put',function(value,...args){const request=put.call(this,value,...args);if(this.name==='profiles'&&value.recovery)queueMicrotask(()=>account.lock());return request;});
+ await assert.rejects(()=>account.createRecoveryCode(),error=>error.name==='LocalAccountCancelled');restore();
+ assert.deepEqual(await dump(),before);assert.equal(account.getState().unlocked,false);await account.login('bruno',PASSWORD);assert.deepEqual(await account.getRecoveryStatus(),{enabled:false});
+});
+
+for(const phase of ['deriveKey','decrypt'])test(`a reset committed during login ${phase} prevents the old credential snapshot from unlocking`,async t=>{
+ const account=setup(t);await register(account);const code=await account.createRecoveryCode();account.lock();
+ const login=createLocalAccount(),reset=createLocalAccount(),subtle=webcrypto.subtle,original=subtle[phase].bind(subtle),entered=deferred(),release=deferred();let held=false;
+ const restore=patchMethod(t,subtle,phase,async(...args)=>{
+  if(!held&&(phase==='decrypt'||args[0]?.name==='PBKDF2')){held=true;entered.resolve();await release.promise;}
+  return original(...args);
+ });
+ const pending=login.login('bruno',PASSWORD),rejected=assert.rejects(pending,error=>error.name==='LocalAccountConflict');await entered.promise;
+ const recovered=await reset.recoverPassword({username:'bruno',recoveryCode:code,newPassword:SECOND_PASSWORD}),committed=await dump();
+ assert.match(recovered.recoveryCode,recoveryPattern);release.resolve();await rejected;restore();
+ assert.equal(login.getState().unlocked,false);assert.deepEqual(await dump(),committed);
+ await login.login('bruno',SECOND_PASSWORD);assert.equal(login.getState().unlocked,true);assert.deepEqual((await dump()).vaults,committed.vaults);
+});

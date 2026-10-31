@@ -1,14 +1,14 @@
-import {createOperationLoading} from './operation-loading.js?v=3.6.0';
-import {createSession,normalizeSession,elapsedSeconds,pauseSession,resumeSession,restartSession} from './workout-session.js?v=3.6.0';
-import * as store from './db.js?v=3.6.0';
-import {parseMusicLink} from './music-links.js?v=3.6.0';
-import {localAccount} from './local-account.js?v=3.6.0';
-import {createLocalBiometric} from './local-biometric.js?v=3.6.0';
-import {createLocalAuthUI} from './local-auth-ui.js?v=3.6.0';
-import {createYouTubeAccount} from './youtube-account.js?v=3.6.0';
-import {createSpotifyAccount} from './spotify-account.js?v=3.6.0';
-import {createMusicPlayer} from './music-player.js?v=3.6.0';
-import {renderChart,filterRange,summarize} from './charts.js?v=3.6.0';
+import {createOperationLoading} from './operation-loading.js?v=3.7.0';
+import {createSession,normalizeSession,elapsedSeconds,pauseSession,resumeSession,restartSession} from './workout-session.js?v=3.7.0';
+import * as store from './db.js?v=3.7.0';
+import {parseMusicLink} from './music-links.js?v=3.7.0';
+import {localAccount} from './local-account.js?v=3.7.0';
+import {createLocalBiometric} from './local-biometric.js?v=3.7.0';
+import {createLocalAuthUI} from './local-auth-ui.js?v=3.7.0';
+import {createYouTubeAccount} from './youtube-account.js?v=3.7.0';
+import {createSpotifyAccount} from './spotify-account.js?v=3.7.0';
+import {createMusicPlayer} from './music-player.js?v=3.7.0';
+import {renderChart,filterRange,summarize} from './charts.js?v=3.7.0';
 'use strict';
 const cassette = () => '<img src="/peragym/docs/assets/cassette.svg" class="cassette-icon" alt="" aria-hidden="true">';
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -87,15 +87,16 @@ async function setTheme(theme, persist = true) {
   $('#theme-toggle').setAttribute('aria-label',theme==='dark'?'Ativar tema claro':'Ativar tema escuro');
   $('meta[name="theme-color"]').content=theme==='dark'?'#100b26':'#fff0f6';
 }
+function hasLocalAccess() {return localAccount.getState().unlocked&&!authUI.hasPendingRecovery?.();}
 function nav(to) {
-  if(!localAccount.getState().unlocked)return;
+  if(!hasLocalAccess())return;
   page=to;selectedId=null;render();window.scrollTo(0,0);
 }
 function render() {
   clearInterval(timerHandle);
-  document.body.classList.toggle('app-locked',!localAccount.getState().unlocked);
-  $('#settings-open').disabled=!localAccount.getState().unlocked;
-  if(!localAccount.getState().unlocked){authUI.render();return;}
+  document.body.classList.toggle('app-locked',!hasLocalAccess());
+  $('#settings-open').disabled=!hasLocalAccess();
+  if(!hasLocalAccess()){authUI.render();return;}
   $$('.nav-item').forEach(b=>{b.classList.toggle('active',b.dataset.page===page);if(b.dataset.page===page)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');});
   const view=selectedId?detailView():page==='fichas'?listView():page==='historico'?historyView():page==='evolucao'?evolutionView():page==='ajustes'?settingsView():page==='musica'?musicView():homeView();
   $('#main').innerHTML=(active&&selectedId!==active.id?ongoingView():'')+view;
@@ -298,7 +299,7 @@ function bindPage(){
   });
 }
 async function handle(action,ds={}){
-  if(!localAccount.getState().unlocked)return;
+  if(!hasLocalAccess())return;
   if(action==='spotify-library'){void loadSpotifyPlaylists();return;}
   if(handling)return;
   handling=true;
@@ -446,7 +447,7 @@ window.peraBack=()=>{
   return false;
 };
 $('#settings-open').onclick=()=>nav('ajustes');
-$('#theme-toggle').onclick=()=>setTheme(data.theme==='dark'?'light':'dark',localAccount.getState().unlocked);
+$('#theme-toggle').onclick=()=>setTheme(data.theme==='dark'?'light':'dark',hasLocalAccess());
 $$('.nav-item').forEach(b=>b.onclick=()=>nav(b.dataset.page));$('.brand').onclick=e=>{e.preventDefault();nav('inicio');};
 $('#add-exercise').onclick=()=>{if($$('.exercise-field').length>=100){notify('Use até 100 exercícios por ficha.');return;}addExerciseField();$$('.exercise-field').at(-1).scrollIntoView({block:'start',behavior:'smooth'});};
 $('#workout-form').onsubmit=saveEditor;$('#close-editor').onclick=closeEditor;$('#cancel-editor').onclick=closeEditor;$('#editor').oncancel=e=>{e.preventDefault();closeEditor();};

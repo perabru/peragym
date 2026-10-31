@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import {webcrypto} from 'node:crypto';
 import * as db from './db.js';
-import {createLocalAccount, localAccount} from './local-account.js?v=3.6.0';
+import {createLocalAccount, localAccount} from './local-account.js?v=3.7.0';
 const require=createRequire(import.meta.url);
 // Run with fake-indexeddb installed in the project, or provide its absolute entry point.
 const fake=require(process.env.PERAGYM_FAKE_IDB||'fake-indexeddb');

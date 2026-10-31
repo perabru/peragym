@@ -8,6 +8,7 @@ const ITERATIONS = 600_000;
 const MAX_DATA_BYTES = 20 * 1024 * 1024;
 const USERNAME = /^[a-z0-9][a-z0-9._-]{2,39}$/;
 const PROFILE_ID = /^[A-Za-z0-9-]{1,80}$/;
+const RECOVERY_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 const connections = new WeakMap();
 const guestConnections = new WeakMap();
 const encoder = new TextEncoder();
@@ -90,6 +91,47 @@ async function derivePasswordKey(password,kdf) {
     const material=await api.subtle.importKey('raw',bytes,'PBKDF2',false,['deriveKey']);
     return await api.subtle.deriveKey({name:'PBKDF2',hash:'SHA-256',salt:decode(kdf.salt,16,32),iterations:kdf.iterations},material,{name:'AES-GCM',length:256},false,['wrapKey','unwrapKey']);
   }finally{bytes.fill(0);}
+}
+function normalizeRecoveryCode(raw) {
+  if(typeof raw!=='string'||raw.length>128)throw failure('Informe o código de recuperação salvo anteriormente.','LocalAccountAuthError');
+  const normalized=raw.normalize('NFKC').trim().toUpperCase().replace(/[- ]/g,'');
+  if(!/^PG[0123456789ABCDEFGHJKMNPQRSTVWXYZ]{32}$/.test(normalized))throw failure('Usuário ou código de recuperação inválidos. Nenhum dado foi alterado.','LocalAccountAuthError');
+  return normalized.slice(2);
+}
+function generateRecoveryCode() {
+  const bytes=randomBytes(20);let buffer=0,bits=0,result='';
+  try{
+    for(const byte of bytes){
+      buffer=(buffer<<8)|byte;bits+=8;
+      while(bits>=5){bits-=5;result+=RECOVERY_ALPHABET[(buffer>>>bits)&31];}
+      buffer&=(1<<bits)-1;
+    }
+    return `PG-${result.match(/.{4}/g).join('-')}`;
+  }finally{bytes.fill(0);}
+}
+function validateRecovery(profile) {
+  const recovery=profile.recovery;
+  if(!plainObject(recovery)||recovery.version!==VERSION||!Number.isSafeInteger(recovery.generation)||recovery.generation<1
+    ||recovery.kdf?.name!=='HKDF'||recovery.kdf?.hash!=='SHA-256'
+    ||recovery.envelope?.version!==VERSION||recovery.envelope?.profileId!==profile.id||recovery.envelope?.purpose!=='recovery-key')
+    throw failure('A recuperação deste perfil está ausente ou não é compatível. Use sua senha local.','LocalAccountDataError');
+  decode(recovery.kdf.salt,16,16);decode(recovery.envelope.iv,12,12);decode(recovery.envelope.ciphertext,48,48);
+  return recovery;
+}
+async function deriveRecoveryKey(profile,code,recovery) {
+  const api=cryptoAPI(),bytes=encoder.encode(normalizeRecoveryCode(code));
+  try{
+    const material=await api.subtle.importKey('raw',bytes,'HKDF',false,['deriveKey']);
+    const info=encoder.encode(JSON.stringify(['PeraGym','recovery-key',VERSION,profile.id,profile.username,recovery.generation]));
+    return await api.subtle.deriveKey({name:'HKDF',hash:'SHA-256',salt:decode(recovery.kdf.salt,16,16),info},material,{name:'AES-GCM',length:256},false,['wrapKey','unwrapKey']);
+  }finally{bytes.fill(0);}
+}
+async function makeRecovery(profile,key,generation) {
+  if(!Number.isSafeInteger(generation)||generation<1)throw failure('A versão do código de recuperação excedeu o limite suportado.','LocalAccountDataError');
+  const code=generateRecoveryCode(),record={version:VERSION,generation,kdf:{name:'HKDF',hash:'SHA-256',salt:encode(randomBytes(16))}};
+  const wrappingKey=await deriveRecoveryKey(profile,code,record);
+  record.envelope=await wrapDataKey(profile,key,wrappingKey,'recovery-key');
+  return {code,record};
 }
 function validateWrappingKey(key,usage) {
   if(!key||key.type!=='secret'||key.algorithm?.name!=='AES-GCM'||key.algorithm?.length!==256||!Array.isArray(key.usages)||!key.usages.includes(usage))throw failure('A chave de proteção biométrica não é válida.','LocalAccountValidationError');
@@ -200,18 +242,86 @@ function guestKeyFrom(records) {
 
 export function createLocalAccount({onChange}={}) {
   let session=null,generation=0;
+  const recoveryTransactions=new Set();
   const listeners=new Set();if(typeof onChange==='function')listeners.add(onChange);
   function getState() {return {supported:supported(),unlocked:Boolean(session),guest:Boolean(session?.guest),profileId:session?.profile.id||null,profile:session?publicProfile(session.profile):null,revision:session?.revision??null,generation};}
   function publish() {for(const listener of listeners){try{listener(getState());}catch{}}}
   function subscribe(listener) {if(typeof listener!=='function')throw failure('Observador de sessão inválido.');listeners.add(listener);return()=>listeners.delete(listener);}
-  function lock() {generation++;session=null;publish();}
+  function abortRecoveryTransactions() {for(const transaction of recoveryTransactions){try{transaction.abort();}catch{}}}
+  function lock() {generation++;session=null;abortRecoveryTransactions();publish();}
   function assertGeneration(run) {if(run!==generation)throw failure('A sessão local foi encerrada. Entre novamente.','LocalAccountCancelled');}
   function requireSession() {if(!session)throw failure('Entre no seu perfil local para abrir os registros.','LocalAccountLocked');return {run:generation,profile:session.profile,key:session.key,revision:session.revision,guest:session.guest};}
-  function beginAuthentication() {generation++;session=null;return generation;}
+  function beginAuthentication() {generation++;session=null;abortRecoveryTransactions();return generation;}
   function activate(run,profile,key,revision,guest=false) {assertGeneration(run);session={profile,key,revision,guest};publish();return publicProfile(profile);}
   async function listProfiles() {
     const profiles=await transact(['profiles'],'readonly',(stores,done)=>{const request=stores.profiles.getAll();request.onsuccess=()=>done(request.result);});
     return profiles.map(profile=>publicProfile(profile)).sort((a,b)=>a.name.localeCompare(b.name,'pt-BR'));
+  }
+  async function replaceProfileMetadata(original,next,run) {
+    const expected=JSON.stringify(original),db=await openDatabase();assertGeneration(run);
+    return new Promise((resolve,reject)=>{
+      const tx=db.transaction(['profiles'],'readwrite'),store=tx.objectStore('profiles');let customError;
+      recoveryTransactions.add(tx);
+      const fail=error=>{customError=error;try{tx.abort();}catch{}};
+      tx.oncomplete=()=>{recoveryTransactions.delete(tx);resolve();};
+      tx.onerror=tx.onabort=()=>{
+        recoveryTransactions.delete(tx);
+        if(run!==generation)return reject(failure('A sessão local foi encerrada. Entre novamente.','LocalAccountCancelled'));
+        reject(customError||failure('Não foi possível salvar a recuperação local. Nenhuma senha ou código foi alterado.','LocalAccountStorageError'));
+      };
+      try{
+        assertGeneration(run);const request=store.get(original.id);
+        request.onsuccess=()=>{
+          try{
+            assertGeneration(run);
+            if(JSON.stringify(request.result)!==expected)return fail(failure('A senha ou o código foi alterado em outra aba. Tente novamente.','LocalAccountConflict'));
+            store.put(next);
+          }catch(error){fail(error);}
+        };
+      }catch(error){fail(error);}
+    });
+  }
+  async function getRecoveryStatus() {
+    const current=requireSession();if(current.guest)return {enabled:false};
+    const records=await recordsFor(current.profile.id);assertGeneration(current.run);
+    const profile=validateMetadata(records.profile);
+    if(profile.recovery===undefined)return {enabled:false};
+    validateRecovery(profile);return {enabled:true};
+  }
+  async function createRecoveryCode() {
+    const current=requireSession();
+    if(current.guest)throw failure('Crie um perfil com senha para ativar um código de recuperação.','LocalAccountAuthError');
+    const records=await recordsFor(current.profile.id);assertGeneration(current.run);
+    const profile=validateMetadata(records.profile),previous=profile.recovery===undefined?null:validateRecovery(profile);
+    await decryptData(profile.id,current.key,records.vault);assertGeneration(current.run);
+    const recovery=await makeRecovery(profile,current.key,(previous?.generation||0)+1);assertGeneration(current.run);
+    const next={...profile,recovery:recovery.record};
+    await replaceProfileMetadata(profile,next,current.run);assertGeneration(current.run);
+    session.profile=next;
+    return recovery.code;
+  }
+  async function recoverPassword({username,recoveryCode,newPassword}={}) {
+    cryptoAPI();
+    if(session)throw failure('Saia do perfil atual antes de recuperar uma senha local.');
+    username=normalizeUsername(username);normalizeRecoveryCode(recoveryCode);newPassword=checkPassword(newPassword);
+    const run=beginAuthentication(),stored=await profileByUsername(username);assertGeneration(run);
+    if(!stored||stored.recovery===undefined)throw failure('Usuário ou código de recuperação inválidos, ou recuperação não ativada previamente. Nenhum dado foi alterado.','LocalAccountAuthError');
+    const profile=validateMetadata(stored),recovery=validateRecovery(profile);let key;
+    try{
+      const wrappingKey=await deriveRecoveryKey(profile,recoveryCode,recovery);assertGeneration(run);
+      key=await unwrapDataKey(profile,wrappingKey,recovery.envelope,'recovery-key');
+    }catch{assertGeneration(run);throw failure('Usuário ou código de recuperação inválidos. Nenhum dado foi alterado.','LocalAccountAuthError');}
+    assertGeneration(run);recoveryCode=null;
+    const records=await recordsFor(profile.id);assertGeneration(run);
+    if(JSON.stringify(records.profile)!==JSON.stringify(profile))throw failure('A senha ou o código foi alterado em outra aba. Tente novamente.','LocalAccountConflict');
+    await decryptData(profile.id,key,records.vault);assertGeneration(run);
+    const kdf={name:'PBKDF2',hash:'SHA-256',iterations:ITERATIONS,salt:encode(randomBytes(16))};
+    const passwordKey=await derivePasswordKey(newPassword,kdf);newPassword=null;assertGeneration(run);
+    const passwordEnvelope=await wrapDataKey(profile,key,passwordKey,'password-key');assertGeneration(run);
+    const rotated=await makeRecovery(profile,key,recovery.generation+1);assertGeneration(run);
+    const next={...profile,kdf,passwordEnvelope,recovery:rotated.record};
+    await replaceProfileMetadata(profile,next,run);assertGeneration(run);
+    return {profile:activate(run,next,key,records.vault.revision),recoveryCode:rotated.code};
   }
   async function register({name,username,password,copyGuestData=false}={}) {
     cryptoAPI();name=normalizedName(name);username=normalizeUsername(username);password=checkPassword(password);
@@ -244,6 +354,9 @@ export function createLocalAccount({onChange}={}) {
     assertGeneration(run);
     const records=await recordsFor(profile.id);assertGeneration(run);
     await decryptData(profile.id,key,records.vault);assertGeneration(run);
+    // A password reset/code rotation in another tab must invalidate an in-flight old snapshot.
+    const latest=await profileByUsername(username);assertGeneration(run);
+    if(JSON.stringify(latest)!==JSON.stringify(profile))throw failure('A senha ou o código foi alterado em outra aba. Entre novamente.','LocalAccountConflict');
     return activate(run,profile,key,records.vault.revision);
   }
   async function enterGuest() {
@@ -321,7 +434,7 @@ export function createLocalAccount({onChange}={}) {
     assertGeneration(run);await decryptData(profileId,key,records.vault);assertGeneration(run);
     return activate(run,profile,key,records.vault.revision);
   }
-  return {register,login,enterGuest,listProfiles,getState,subscribe,lock,readData,mutateData,wrapSessionKey,unlockWithWrappedKey};
+  return {register,login,enterGuest,listProfiles,getState,subscribe,lock,readData,mutateData,wrapSessionKey,unlockWithWrappedKey,getRecoveryStatus,createRecoveryCode,recoverPassword};
 }
 
 export const localAccount=createLocalAccount();
