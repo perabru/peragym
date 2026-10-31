@@ -1,8 +1,10 @@
-# PeraGym — aplicativo gratuito
+# PeraGym PWA — Vice Training
 
 **[Abrir o PeraGym e instalar grátis](https://peragym-treino.perabru.chatgpt.site/)**
 
-Aplicativo em HTML, CSS e JavaScript, instalável como PWA no Android e no iOS, com banco IndexedDB local, fichas de treino e gráficos de evolução de cargas e peso corporal.
+Aplicativo gratuito em HTML, CSS e JavaScript, instalável como PWA no Android e no iOS, com banco IndexedDB local, fichas de treino e gráficos de evolução de cargas e peso corporal.
+
+A versão **Vice Training** traz visual retrô tropical, neon rosa e ciano, atmosfera roxa, palmeiras, fontes locais Bungee e Yellowtail e botões de salvar com fita cassete. A identidade é própria do PeraGym.
 
 ## Doação opcional
 
@@ -29,6 +31,6 @@ npm run build
 npm run validate
 ```
 
-Os **32 testes** cobrem acesso gratuito, Pix opcional de R$ 1,99, migração do cache offline, IndexedDB, gráficos e backup. O fluxo de compras foi desativado; as antigas tabelas foram preservadas sem alteração. O app gratuito funciona sem o banco remoto ou cookies de licença.
+Os **35 testes** cobrem acesso gratuito, Pix opcional de R$ 1,99, migração do cache offline, IndexedDB, gráficos, backup e integridade dos recursos visuais e fontes locais. O fluxo de compras foi desativado; as antigas tabelas foram preservadas sem alteração. O app gratuito funciona sem o banco remoto ou cookies de licença.
 
 Consulte [pwa/README.md](pwa/README.md). O código Android anterior permanece no repositório e no histórico como versão anterior.

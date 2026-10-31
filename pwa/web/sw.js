@@ -1,15 +1,20 @@
 'use strict';
 
 // The app is free. Only static assets are cached; personal records stay in IndexedDB.
-const VERSION = 'peragym-2.1.0';
+const VERSION = 'peragym-3.0.0';
 const PUBLIC_CACHE = `${VERSION}-public`;
 const APP_CACHE = `${VERSION}-app`;
 const CACHE_PREFIX = 'peragym-';
 const APP_SUFFIX = '-app';
+const THEME_PATHS = new Set([
+  '/assets/cassette.svg', '/assets/night-drive.jpg', '/assets/palms.svg',
+  '/assets/fonts/bungee.ttf', '/assets/fonts/yellowtail.ttf'
+]);
 const PUBLIC_PATHS = new Set([
   '/', '/index.html', '/promo.css', '/promo.js', '/pwa.js', '/pwa.css',
   '/offline.html', '/manifest.webmanifest', '/icons/icon-192.png',
-  '/icons/icon-512.png', '/icons/maskable-512.png', '/icons/apple-touch-icon.png'
+  '/icons/icon-512.png', '/icons/maskable-512.png', '/icons/apple-touch-icon.png',
+  ...THEME_PATHS
 ]);
 const APP_PATHS = new Set([
   '/app/', '/app/index.html', '/app/style.css', '/app/app.js', '/app/db.js', '/app/charts.js'
@@ -30,6 +35,15 @@ function appResponse(response, path) {
   if (path === '/app/' || path === '/app/index.html') return type === 'text/html';
   if (path.endsWith('.css')) return type === 'text/css';
   if (path.endsWith('.js')) return type === 'text/javascript' || type === 'application/javascript';
+  return false;
+}
+
+function themeResponse(response, path) {
+  if (!THEME_PATHS.has(path) || !successful(response)) return false;
+  const type = mime(response);
+  if (path.endsWith('.svg')) return type === 'image/svg+xml';
+  if (path.endsWith('.jpg')) return type === 'image/jpeg';
+  if (path.endsWith('.ttf')) return ['font/ttf', 'font/sfnt', 'application/font-sfnt', 'application/x-font-ttf'].includes(type);
   return false;
 }
 
@@ -57,6 +71,13 @@ async function completeShell(cacheName) {
     const response = await cache.match(appKey(path));
     if (!response || !appResponse(response, path)) return false;
   }
+  if (cacheName === APP_CACHE) {
+    const theme = await caches.open(PUBLIC_CACHE);
+    for (const path of THEME_PATHS) {
+      const response = await theme.match(absolute(path));
+      if (!response || !themeResponse(response, path)) return false;
+    }
+  }
   return true;
 }
 
@@ -82,15 +103,23 @@ async function cachedApp(path) {
 
 async function warmAppShell(client) {
   // No account, session, donation, or payment endpoint is needed to use the app.
-  const paths = [...APP_PATHS].filter(path => path !== '/app/');
+  const paths = [...APP_PATHS].filter(path => path !== '/app/').concat([...THEME_PATHS]);
   const results = await Promise.allSettled(paths.map(async path => {
+    if (THEME_PATHS.has(path)) {
+      const saved = await (await caches.open(PUBLIC_CACHE)).match(absolute(path));
+      if (saved && themeResponse(saved, path)) return {path, response: saved};
+    }
     const response = await fetch(absolute(path), {credentials: 'same-origin', cache: 'no-store'});
-    if (!appResponse(response, path)) throw new Error('Invalid application asset.');
+    if (!(THEME_PATHS.has(path) ? themeResponse(response, path) : appResponse(response, path))) throw new Error('Invalid application asset.');
     return {path, response};
   }));
   if (results.every(result => result.status === 'fulfilled')) {
     const cache = await caches.open(APP_CACHE);
-    for (const result of results) await cache.put(appKey(result.value.path), result.value.response);
+    const theme = await caches.open(PUBLIC_CACHE);
+    for (const result of results) {
+      if (THEME_PATHS.has(result.value.path)) await theme.put(absolute(result.value.path), result.value.response);
+      else await cache.put(appKey(result.value.path), result.value.response);
+    }
     if (await completeShell(APP_CACHE)) {
       const names = await caches.keys();
       await Promise.all(names.filter(name => name.startsWith(CACHE_PREFIX) && name.endsWith(APP_SUFFIX) && name !== APP_CACHE).map(name => caches.delete(name)));

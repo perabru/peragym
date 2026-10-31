@@ -4,7 +4,11 @@ export const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, chara
 }[character]));
 
 const DAY = 86_400_000;
-const colors = { coral: '#ec7263', wine: '#974859' };
+// Preserve the public palette keys while matching the app's neon night theme.
+const colors = {
+  coral: 'var(--chart-pink, #ff4fa8)',
+  wine: 'var(--chart-cyan, #49e5f4)'
+};
 const kgFormat = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 3 });
 const fullDate = new Intl.DateTimeFormat('pt-BR', {
   day: '2-digit', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit'
@@ -95,7 +99,7 @@ export function renderChart(input, options = {}) {
   const color = colors[colorName];
   if (!points.length) {
     return `<figure class="chart chart-empty chart-color-${colorName}" aria-label="${escapeHtml(title)}: sem registros">
-      <svg viewBox="0 0 100 60" width="100" height="60" aria-hidden="true"><path d="M8 5v47h84" fill="none" stroke="currentColor" opacity=".2" stroke-width="2"/><path d="M18 39 39 29 59 34 83 15" fill="none" stroke="${color}" stroke-width="3" stroke-linejoin="round" stroke-dasharray="4 6"/><circle cx="83" cy="15" r="4" fill="${color}"/></svg>
+      <svg class="chart-empty-cassette" viewBox="0 0 112 72" width="112" height="72" aria-hidden="true"><rect x="9" y="12" width="94" height="54" rx="10" fill="none" stroke="currentColor" stroke-opacity=".35" stroke-width="1.5"/><rect x="20" y="20" width="72" height="25" rx="5" fill="${color}" fill-opacity=".1"/><path d="M25 24h7m48 0h7M49 32h14M30 59l7-11h38l7 11Z" fill="none" stroke="${color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="41" cy="32" r="8" fill="none" stroke="${color}" stroke-width="2"/><circle cx="71" cy="32" r="8" fill="none" stroke="${color}" stroke-width="2"/><circle cx="41" cy="32" r="2" fill="${color}"/><circle cx="71" cy="32" r="2" fill="${color}"/><circle cx="18" cy="56" r="1.5" fill="currentColor" opacity=".4"/><circle cx="94" cy="56" r="1.5" fill="currentColor" opacity=".4"/></svg>
       <figcaption><strong>Seu próximo registro dá início ao gráfico.</strong><span>Adicione uma medição para acompanhar a evolução ao longo do tempo.</span></figcaption>
     </figure>`;
   }
@@ -120,18 +124,18 @@ export function renderChart(input, options = {}) {
     labels.add(label);
     const position = x(point.at);
     const anchor = position < bounds.left + 25 ? 'start' : position > bounds.right - 25 ? 'end' : 'middle';
-    return `<text class="chart-tick chart-date" x="${coordinate(position)}" y="226" text-anchor="${anchor}" font-size="14" fill="currentColor" opacity=".7">${escapeHtml(label)}</text>`;
+    return `<text class="chart-tick chart-date" x="${coordinate(position)}" y="226" text-anchor="${anchor}" font-size="14" fill="currentColor" opacity=".82">${escapeHtml(label)}</text>`;
   }).join('');
   const summary = summarize(points);
   const description = `${points.length} registro${points.length === 1 ? '' : 's'}. Primeiro: ${kgFormat.format(summary.first)} ${unit}; último: ${kgFormat.format(summary.last)} ${unit}. De ${fullDate.format(firstAt)} até ${fullDate.format(lastAt)}.`;
   return `<figure class="chart chart-color-${colorName}">
     <svg class="chart-svg" viewBox="0 0 420 248" role="img" aria-labelledby="${id}-title ${id}-description" preserveAspectRatio="xMidYMid meet">
       <title id="${id}-title">${escapeHtml(title)}</title><desc id="${id}-description">${escapeHtml(description)}</desc>
-      <defs><linearGradient id="${id}-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${color}" stop-opacity=".26"/><stop offset="100%" stop-color="${color}" stop-opacity=".015"/></linearGradient></defs>
-      <text class="chart-unit" x="57" y="13" font-size="14" fill="currentColor" opacity=".65">${escapeHtml(unit)}</text>
-      ${axis.ticks.map(value => `<g class="chart-grid"><line x1="${bounds.left}" x2="${bounds.right}" y1="${coordinate(y(value))}" y2="${coordinate(y(value))}" stroke="currentColor" stroke-opacity=".1" stroke-dasharray="3 5"/><text class="chart-tick" x="44" y="${coordinate(y(value) + 4.5)}" text-anchor="end" font-size="14" fill="currentColor" opacity=".7">${kgFormat.format(value)}</text></g>`).join('')}
-      ${points.length > 1 && firstAt !== lastAt ? `<path class="chart-area" d="${area}" fill="url(#${id}-fill)"/><path class="chart-line" d="${path}" stroke="${color}" fill="none" stroke-width="3.2" stroke-linejoin="round" stroke-linecap="round"/>` : ''}
-      ${points.map(point => `<circle class="chart-point" cx="${coordinate(x(point.at))}" cy="${coordinate(y(point.value))}" r="${points.length === 1 ? 5.5 : 4}" fill="${color}" stroke="var(--surface, #fffdf9)" stroke-width="2" tabindex="0" role="img" aria-label="${escapeHtml(`${fullDate.format(point.at)}: ${kgFormat.format(point.value)} ${unit}`)}"><title>${escapeHtml(`${fullDate.format(point.at)} · ${kgFormat.format(point.value)} ${unit}`)}</title></circle>`).join('')}
+      <defs><linearGradient id="${id}-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${color}" stop-opacity=".32"/><stop offset="100%" stop-color="${color}" stop-opacity=".015"/></linearGradient></defs>
+      <text class="chart-unit" x="57" y="13" font-size="14" fill="currentColor" opacity=".82">${escapeHtml(unit)}</text>
+      ${axis.ticks.map(value => `<g class="chart-grid"><line x1="${bounds.left}" x2="${bounds.right}" y1="${coordinate(y(value))}" y2="${coordinate(y(value))}" stroke="currentColor" stroke-opacity=".18" stroke-dasharray="2 7"/><text class="chart-tick" x="44" y="${coordinate(y(value) + 4.5)}" text-anchor="end" font-size="14" fill="currentColor" opacity=".82">${kgFormat.format(value)}</text></g>`).join('')}
+      ${points.length > 1 && firstAt !== lastAt ? `<path class="chart-area" d="${area}" fill="url(#${id}-fill)"/><path class="chart-line-glow" d="${path}" stroke="${color}" stroke-opacity=".1" fill="none" stroke-width="10" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"/><path class="chart-line-halo" d="${path}" stroke="${color}" stroke-opacity=".16" fill="none" stroke-width="6" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"/><path class="chart-line" d="${path}" stroke="${color}" fill="none" stroke-width="3.2" stroke-linejoin="round" stroke-linecap="round"/>` : ''}
+      ${points.map(point => `<circle class="chart-point" cx="${coordinate(x(point.at))}" cy="${coordinate(y(point.value))}" r="${points.length === 1 ? 5.5 : 4}" fill="${color}" stroke="var(--surface, #101323)" stroke-width="2" tabindex="0" role="img" aria-label="${escapeHtml(`${fullDate.format(point.at)}: ${kgFormat.format(point.value)} ${unit}`)}"><title>${escapeHtml(`${fullDate.format(point.at)} · ${kgFormat.format(point.value)} ${unit}`)}</title></circle>`).join('')}
       ${dateLabels}
     </svg>
     <figcaption class="chart-caption"><span>${points.length === 1 ? 'Primeiro registro salvo. Os próximos pontos mostrarão a evolução.' : 'Cada ponto representa um registro salvo por você.'}</span><span>${points.length} registro${points.length === 1 ? '' : 's'}</span></figcaption>

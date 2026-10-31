@@ -1,8 +1,8 @@
-# PeraGym PWA — gratuito
+# PeraGym PWA — Vice Training
 
 **[Abrir PeraGym](https://peragym-treino.perabru.chatgpt.site/)**
 
-Aplicativo em HTML, CSS e JavaScript, instalável no Android e no iPhone. Fichas, exercícios, cargas, histórico e peso corporal ficam no IndexedDB do próprio aparelho.
+Aplicativo gratuito em HTML, CSS e JavaScript, instalável no Android e no iPhone. Identidade retrô tropical, com neon rosa e ciano, céu roxo, palmeiras e botões de salvar com fita cassete. Fichas, exercícios, cargas, histórico e peso corporal ficam no IndexedDB do próprio aparelho.
 
 ## Baixar e instalar gratuitamente
 
@@ -53,4 +53,4 @@ Os arquivos de migração em `drizzle/` são históricos e permanecem imutáveis
 
 ## Referências visuais
 
-Identidade adaptada dos cards e exemplos enviados pelo usuário (KSAplay, Voxybuns, JkHuger e milley69/Uiverse). QR Code gerado com `qrcode-generator`.
+Visual inspirado nas referências de cidade tropical neon e fita cassete enviadas pelo usuário. PeraGym mantém identidade própria; não utiliza o logotipo GTA como marca do aplicativo. A fotografia `night-drive.jpg` foi fornecida pelo usuário. Fontes locais Bungee (OFL) e Yellowtail (Apache 2.0), com seus textos de licença em `web/assets/fonts/`. O ícone de salvar é uma fita cassete em SVG. QR Code gerado com `qrcode-generator`.

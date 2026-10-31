@@ -2,18 +2,37 @@
   "id": "/app/",
   "name": "PeraGym — Seu treino, sua evolução",
   "short_name": "PeraGym",
-  "description": "Fichas de treino, cargas e evolução do peso em um aplicativo que funciona offline e guarda seus dados no aparelho.",
+  "description": "Fichas de treino e gráficos de evolução. Seu ritmo salvo em um app gratuito, com visual neon e banco local para usar offline.",
   "lang": "pt-BR",
   "start_url": "/app/",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#fff8f1",
-  "theme_color": "#974859",
+  "background_color": "#100b26",
+  "theme_color": "#ff63b9",
   "orientation": "any",
-  "categories": ["health", "fitness", "productivity"],
+  "categories": [
+    "health",
+    "fitness",
+    "productivity"
+  ],
   "icons": [
-    {"src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
-    {"src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
-    {"src": "/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+    {
+      "src": "/icons/icon-192.png?v=3.0.0",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png?v=3.0.0",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/maskable-512.png?v=3.0.0",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
   ]
 }

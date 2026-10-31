@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 150" fill="none" role="img" aria-labelledby="cassette-title">
+  <title id="cassette-title">Fita cassete PeraGym</title>
+  <defs>
+    <linearGradient id="plastic" x1="120" y1="3" x2="120" y2="147" gradientUnits="userSpaceOnUse"><stop stop-color="#29262b"/><stop offset=".44" stop-color="#121117"/><stop offset="1" stop-color="#090a10"/></linearGradient>
+    <linearGradient id="metal" x1="0" y1="-18" x2="12" y2="18" gradientUnits="userSpaceOnUse"><stop stop-color="#fff8e9"/><stop offset=".5" stop-color="#c8c3c6"/><stop offset="1" stop-color="#8f8c99"/></linearGradient>
+    <clipPath id="label"><rect x="15" y="16" width="210" height="99" rx="9"/></clipPath>
+    <g id="screw"><circle r="3.5" fill="#c9b6a5"/><circle r="2.7" stroke="#514950" stroke-width=".6"/><path d="m-1.4-1.4 2.8 2.8m0-2.8L-1.4 1.4" stroke="#625553" stroke-width="1.3" stroke-linecap="round"/></g>
+    <g id="reel"><circle r="18" fill="#08090f"/><circle r="15.8" fill="url(#metal)"/><circle r="12.7" fill="#e6e2dc"/><path d="M-2-12.6h4v7.3l6.3-3.6 2 3.5L4-1.8l6.3 3.6-2 3.5L2 1.7V9h-4V1.7l-6.3 3.6-2-3.5L-4-1.8l-6.3-3.6 2-3.5L-2-5.3Z" fill="#a8a4aa"/><circle r="3.5" fill="#25222b"/><circle r="1.3" fill="#75696f"/></g>
+  </defs>
+  <rect x="3" y="3" width="234" height="144" rx="12" fill="url(#plastic)" stroke="#07070c" stroke-width="3"/>
+  <path d="M16 8h208a9 9 0 0 1 9 9v114" stroke="#5c4e62" stroke-opacity=".6" stroke-width="1.1"/>
+  <rect x="15" y="16" width="210" height="99" rx="9" fill="#fff4da" stroke="#45333e"/>
+  <g clip-path="url(#label)"><path d="M15 52h210v8H15Z" fill="#f84980"/><path d="M15 60h210v8H15Z" fill="#ff9257"/><path d="M15 68h210v8H15Z" fill="#f8e563"/><path d="M15 76h210v8H15Z" fill="#42bb91"/><path d="M15 84h210v8H15Z" fill="#299ed4"/></g>
+  <path d="M27 30h186M27 43h186" stroke="#b1a493" stroke-width=".75"/>
+  <path d="M52 62a10 10 0 0 1 10-10h116a10 10 0 0 1 10 10v23a10 10 0 0 1-10 10H62a10 10 0 0 1-10-10Z" fill="#0d0b11" stroke="#3c3043" stroke-width="1.2"/>
+  <use href="#reel" transform="translate(78 74)"/><use href="#reel" transform="translate(162 74)"/>
+  <path d="M107 61h26v26h-26Z" fill="#5b414d"/>
+  <path d="M119 61h11c-3.2 7.7-3.2 18.3 0 26h-11c3.2-7.7 3.2-18.3 0-26Z" fill="#d7cdd4"/>
+  <path d="M110 74h20m-17-3v6m6-6v6m6-6v6" stroke="#8d7f88" stroke-width="1.3" stroke-linecap="round"/>
+  <path d="m62 121-8 26h132l-8-26Z" fill="#090910" stroke="#433345" stroke-width="1.2"/>
+  <path d="M66 123h108" stroke="#574353" stroke-width=".8"/>
+  <circle cx="78" cy="137" r="4.5" fill="#bdadac"/><circle cx="162" cy="137" r="4.5" fill="#bdadac"/>
+  <rect x="99" y="132" width="7" height="8" rx="2" fill="#b9a9af"/><rect x="134" y="132" width="7" height="8" rx="2" fill="#b9a9af"/>
+  <use href="#screw" transform="translate(11 11)"/><use href="#screw" transform="translate(229 11)"/><use href="#screw" transform="translate(11 139)"/><use href="#screw" transform="translate(229 139)"/><use href="#screw" transform="translate(120 127)"/>
+  <text x="27" y="107" fill="#2c202a" font-family="Arial,sans-serif" font-size="9" font-weight="700" letter-spacing=".7">PG—90</text>
+  <text x="167" y="106" fill="#4c3341" font-family="Arial,sans-serif" font-size="6.5" font-weight="700" letter-spacing=".5">SIDE A · SAVE</text>
+</svg>

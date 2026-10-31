@@ -10,13 +10,13 @@
     document.body.classList.toggle('dark', dark);
     $('#theme-toggle').setAttribute('aria-checked', String(dark));
     $('#theme-toggle').setAttribute('aria-label', dark ? 'Ativar tema claro' : 'Ativar tema escuro');
-    $('meta[name="theme-color"]').content = dark ? '#211c26' : '#fff8f1';
+    $('meta[name="theme-color"]').content = dark ? '#100b25' : '#f8e8ee';
     if (persist) try { localStorage.setItem(THEME_KEY, dark ? 'dark' : 'light'); } catch (_) {}
   }
   try {
     const theme = localStorage.getItem(THEME_KEY);
-    setTheme(theme ? theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches, false);
-  } catch (_) { setTheme(false, false); }
+    setTheme(theme ? theme === 'dark' : true, false);
+  } catch (_) { setTheme(true, false); }
   $('#theme-toggle').addEventListener('click', () => setTheme(!document.body.classList.contains('dark')));
   $('#year').textContent = new Date().getFullYear();
 

@@ -12,9 +12,9 @@
   const android = /Android/i.test(navigator.userAgent);
   const iosOtherBrowser = ios && /CriOS|FxiOS|EdgiOS|OPiOS/i.test(navigator.userAgent);
 
-  if (!document.querySelector('link[href="/pwa.css"]')) {
+  if (!document.querySelector('link[href^="/pwa.css"]')) {
     const styles = document.createElement('link');
-    styles.rel = 'stylesheet';styles.href = '/pwa.css';document.head.append(styles);
+    styles.rel = 'stylesheet';styles.href = '/pwa.css?v=3.0.0';document.head.append(styles);
   }
 
   function updateButtons() {
@@ -37,6 +37,8 @@
   function openGuide() {
     guide?.remove();
     guide = document.createElement('dialog');guide.className = 'pwa-guide';guide.setAttribute('aria-labelledby','pwa-guide-title');
+    const tape = document.createElement('img');tape.className='pwa-guide-tape';tape.src='/assets/cassette.svg';tape.alt='';tape.width=100;tape.height=66;
+    const kicker = document.createElement('span');kicker.className='pwa-guide-kicker';kicker.textContent='SEU RITMO. SALVO.';
     const title = document.createElement('h2');title.id = 'pwa-guide-title';title.textContent = ios ? 'PeraGym no seu iPhone' : android ? 'PeraGym no seu Android' : 'PeraGym sempre por perto';
     const intro = document.createElement('p');intro.textContent = iosOtherBrowser ? 'Abra este endereço no Safari para adicionar o PeraGym à sua Tela de Início.' : ios ? 'No Safari, são três passos. Não é necessário baixar pela App Store.' : 'Instale pelo navegador para abrir o aplicativo direto da sua tela inicial.';
     const list = document.createElement('ol');
@@ -48,8 +50,9 @@
     if (iosOtherBrowser) {
       const copy=document.createElement('button');copy.type='button';copy.className='pwa-guide-secondary';copy.textContent='Copiar endereço';copy.addEventListener('click', async()=>{try{await navigator.clipboard.writeText(new URL('/app/',location.origin).href);note.textContent='Endereço copiado. Abra o Safari e cole na barra de endereço.';}catch(_){note.textContent=`Abra o Safari e acesse ${new URL('/app/',location.origin).href}`;}});actions.append(copy);
     }
-    const close=document.createElement('button');close.type='button';close.className='pwa-guide-primary';close.textContent='Entendi';close.addEventListener('click',()=>guide.close());actions.append(close);
-    guide.append(title,intro,list,note,storageNote,actions);guide.addEventListener('close',()=>{guide?.remove();guide=undefined;});document.body.append(guide);guide.showModal();
+    const panel=guide;
+    const close=document.createElement('button');close.type='button';close.className='pwa-guide-primary';close.textContent='Entendi';close.addEventListener('click',()=>panel.close());actions.append(close);
+    guide.append(tape,kicker,title,intro,list,note,storageNote,actions);guide.addEventListener('close',()=>{panel.remove();if(guide===panel)guide=undefined;});document.body.append(guide);guide.showModal();
   }
 
   async function install() {
@@ -67,11 +70,13 @@
     if (!inApp || updateShown || !worker) return;
     updateShown=true;
     const banner=document.createElement('aside');banner.className='pwa-update';banner.setAttribute('aria-label','Atualização do aplicativo');
-    const text=document.createElement('p');text.textContent='Uma nova versão do PeraGym está pronta. Salve a ficha em edição antes de atualizar.';
+    const tape=document.createElement('img');tape.className='pwa-update-tape';tape.src='/assets/cassette.svg';tape.alt='';tape.width=58;tape.height=39;
+    const title=document.createElement('h3');title.textContent='Nova versão pronta.';
+    const text=document.createElement('p');text.textContent='Salve a ficha que você está editando antes de atualizar.';
     const actions=document.createElement('div');
     const later=document.createElement('button');later.type='button';later.className='pwa-guide-secondary';later.textContent='Depois';later.addEventListener('click',()=>banner.remove());
     const update=document.createElement('button');update.type='button';update.className='pwa-guide-primary';update.textContent='Atualizar agora';update.addEventListener('click',()=>{reloadAfterUpdate=true;worker.postMessage({type:'PERAGYM_SKIP_WAITING'});banner.remove();});
-    actions.append(later,update);banner.append(text,actions);document.body.append(banner);
+    actions.append(later,update);banner.append(tape,title,text,actions);document.body.append(banner);
   }
 
   function prepareOffline() {
@@ -90,7 +95,7 @@
     updateButtons();observer.observe(document.body,{childList:true,subtree:true});
     if (!('serviceWorker' in navigator) || !window.isSecureContext) return;
     try {
-      registration=await navigator.serviceWorker.register('/sw.js',{scope:'/'});
+      registration=await navigator.serviceWorker.register('/sw.js?v=3.0.0',{scope:'/'});
       await navigator.serviceWorker.ready;
       prepareOffline();
       if(registration.waiting)offerUpdate(registration.waiting);

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 320" fill="none" role="img" aria-labelledby="palms-title">
+  <title id="palms-title">Silhuetas de palmeiras ao pôr do sol</title>
+  <defs><g id="palm" fill="#100b21"><path d="M103 279c-6-76-5-142 6-210l10 2c-9 71-9 137-1 208Z"/><path d="M111 77C83 49 51 49 12 67c34-5 58 3 75 21C60 83 34 98 19 123c25-20 49-20 73-24-15 20-20 46-15 73 7-28 19-50 33-65 3 30 15 52 34 69-8-28-15-50-16-73 19 13 38 18 65 15-24-8-41-21-50-34 21 0 44-3 70-16-35 4-63-2-78-10 13-12 28-19 48-22-30-5-55 4-72 21Z"/></g></defs>
+  <use href="#palm" transform="translate(-14 22) scale(1.05)"/>
+  <use href="#palm" transform="translate(320 78) scale(.77)"/>
+  <use href="#palm" transform="translate(194 132) scale(.6)"/>
+  <path d="M0 307c87-12 170-14 248-6 83-9 166-7 252 7v12H0Z" fill="#100b21"/>
+</svg>

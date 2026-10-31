@@ -1,1 +1,86 @@
-.pwa-guide{box-sizing:border-box;width:min(440px,calc(100% - 28px));max-height:calc(100dvh - 36px);overflow:auto;padding:27px;border:1px solid #eadbd5;border-radius:25px;background:#fff8f1;color:#392b30;box-shadow:0 24px 90px #21151d50;font:14px/1.6 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.pwa-guide::backdrop{background:#211521a6;backdrop-filter:blur(5px)}.pwa-guide h2{font-size:25px;letter-spacing:-.8px;line-height:1.2;margin:0 0 14px}.pwa-guide p{margin:12px 0;color:#77636b}.pwa-guide ol{margin:20px 0;padding-left:25px}.pwa-guide li{padding-left:5px;margin:12px 0}.pwa-guide li::marker{font-weight:800;color:#974859}.pwa-guide .pwa-guide-note{padding:14px;border-radius:14px;background:#f3e6df;font-size:12px}.pwa-guide-actions,.pwa-update>div{display:flex;gap:10px;justify-content:flex-end;margin-top:22px}.pwa-guide-primary,.pwa-guide-secondary{box-sizing:border-box;border:1px solid transparent;border-radius:13px;padding:12px 17px;min-height:46px;font:700 12px/1.4 system-ui,-apple-system,sans-serif;cursor:pointer}.pwa-guide-primary{background:#974859;color:#fff8f1;box-shadow:0 3px 0 #673642}.pwa-guide-secondary{background:#fffdf9;color:#663d4a;border-color:#dfcbd0;box-shadow:0 3px 0 #e9d8d8}.pwa-guide-primary:focus-visible,.pwa-guide-secondary:focus-visible{outline:3px solid #ec7263;outline-offset:4px}.pwa-announcement{position:fixed;z-index:10000;bottom:105px;left:50%;transform:translate(-50%,15px);width:max-content;max-width:calc(100% - 36px);box-sizing:border-box;background:#392b30;color:#fff8f1;border:1px solid #b99292;border-radius:15px;padding:13px 18px;font:12px/1.5 system-ui,sans-serif;opacity:0;pointer-events:none;transition:.2s;box-shadow:0 7px 25px #0002;text-align:center}.pwa-announcement.is-visible{opacity:1;transform:translate(-50%,0)}.pwa-update{position:fixed;z-index:1000;bottom:105px;left:50%;transform:translateX(-50%);box-sizing:border-box;width:min(420px,calc(100% - 28px));padding:19px 21px;border:1px solid #e2bbba;border-radius:20px;background:#fff8f1;color:#392b30;box-shadow:0 8px 35px #21151d30;font:13px/1.6 system-ui,sans-serif}.pwa-update p{margin:0}.pwa-update>div{margin-top:13px}.dark .pwa-guide,.dark .pwa-update,[data-theme="dark"] .pwa-guide,[data-theme="dark"] .pwa-update{background:#2d2530;color:#fff2e8;border-color:#684655}.dark .pwa-guide p,[data-theme="dark"] .pwa-guide p{color:#c8b3bd}.dark .pwa-guide .pwa-guide-note,[data-theme="dark"] .pwa-guide .pwa-guide-note{background:#49313e}.pwa-offline-page{margin:0;background:#fff8f1;color:#392b30;font:15px/1.6 system-ui,-apple-system,sans-serif;min-height:100dvh;display:grid;place-items:center;padding:24px;box-sizing:border-box}.pwa-offline-card{width:min(430px,100%);text-align:center}.pwa-offline-mark{margin:0 auto 24px;display:grid;place-items:center;width:90px;height:90px;transform:rotate(-8deg);border-radius:27px;background:#ec7263;color:#633945;box-shadow:7px 7px 0 #97485920;font-weight:850;font-size:35px;letter-spacing:-3px}.pwa-offline-card h1{font-size:31px;line-height:1.15;letter-spacing:-1px;margin:0 0 16px}.pwa-offline-card p{color:#77636b;margin:16px 0 25px}.pwa-offline-card a{text-decoration:none;display:inline-flex;align-items:center;justify-content:center;min-height:47px;padding:0 22px;border-radius:14px;background:#974859;color:#fff8f1;box-shadow:0 4px 0 #673642;font-size:13px;font-weight:750}.pwa-offline-card small{display:block;margin-top:23px;color:#77636b;font-size:11px}@media(prefers-reduced-motion:reduce){.pwa-announcement{transition:none}}
+@font-face{font-family:Bungee;src:url('/assets/fonts/bungee.ttf') format('truetype');font-weight:400;font-style:normal;font-display:swap}
+@font-face{font-family:Yellowtail;src:url('/assets/fonts/yellowtail.ttf') format('truetype');font-weight:400;font-style:normal;font-display:swap}
+
+/* Install and update surfaces share the application's cassette-era palette. */
+.pwa-guide,.pwa-update{
+  --pwa-panel:#191132;--pwa-ink:#fff3fc;--pwa-muted:#cbbddd;
+  --pwa-pink:#ff63b9;--pwa-cyan:#5ee7ff;--pwa-line:#73406e;--pwa-note:#291a40;
+  box-sizing:border-box;background:var(--pwa-panel);color:var(--pwa-ink);
+  border:1px solid var(--pwa-line);font:14px/1.65 system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  box-shadow:0 24px 90px #0703109c,0 0 35px #ff63b918;
+}
+body:not(.dark) .pwa-guide,body:not(.dark) .pwa-update,[data-theme='light'] .pwa-guide,[data-theme='light'] .pwa-update{
+  --pwa-panel:#fff0f6;--pwa-ink:#231335;--pwa-muted:#705c7c;
+  --pwa-pink:#c91f78;--pwa-cyan:#007d91;--pwa-line:#e1abc9;--pwa-note:#f6dfef;
+}
+.pwa-guide{
+  width:min(450px,calc(100% - 28px));max-height:calc(100dvh - 36px);overflow:auto;
+  padding:29px 28px 26px;border-radius:24px;overscroll-behavior:contain;
+  background-image:linear-gradient(115deg,#ff63b90c,transparent 48%,#5ee7ff09);
+}
+.pwa-guide::backdrop{background:#080414c7;backdrop-filter:blur(9px)}
+.pwa-guide-tape{display:block;width:103px;height:auto;margin:0 0 16px;transform:rotate(-7deg);filter:drop-shadow(0 6px 9px #ff63b92e)}
+.pwa-guide-kicker{display:block;color:var(--pwa-cyan);font:400 9px/1.5 Bungee,system-ui,sans-serif;letter-spacing:2.1px;margin-bottom:9px}
+.pwa-guide h2{font:400 22px/1.3 Bungee,system-ui,sans-serif;letter-spacing:-.5px;margin:0 0 15px;overflow-wrap:break-word}
+.pwa-guide p{margin:12px 0;color:var(--pwa-muted)}
+.pwa-guide ol{margin:22px 0;padding-left:26px}
+.pwa-guide li{padding-left:6px;margin:13px 0}
+.pwa-guide li::marker{font-family:Bungee,system-ui,sans-serif;color:var(--pwa-pink);font-size:12px}
+.pwa-guide .pwa-guide-note{padding:13px 14px;border-radius:13px;background:var(--pwa-note);font-size:11px;line-height:1.65;overflow-wrap:anywhere;border-left:2px solid var(--pwa-cyan)}
+.pwa-guide-actions,.pwa-update>div{display:flex;gap:10px;justify-content:flex-end;margin-top:23px;flex-wrap:wrap}
+.pwa-guide-primary,.pwa-guide-secondary{
+  box-sizing:border-box;border:1px solid transparent;border-radius:12px;padding:13px 17px;min-height:46px;
+  font:400 10px/1.45 Bungee,system-ui,-apple-system,sans-serif;cursor:pointer;
+  transition:transform .12s,box-shadow .12s;text-align:center;
+}
+.pwa-guide-primary{background:var(--pwa-pink,#ff63b9);color:var(--pwa-panel,#191132);box-shadow:0 4px 0 #6a2b74,0 0 17px #ff63b91b}
+.pwa-guide-secondary{background:var(--pwa-note,#291a40);color:var(--pwa-ink,#fff3fc);border-color:var(--pwa-line,#73406e);box-shadow:0 4px 0 #05020c2e}
+.pwa-guide-primary:active,.pwa-guide-secondary:active{transform:translateY(3px);box-shadow:none}
+.pwa-guide-primary:focus-visible,.pwa-guide-secondary:focus-visible{outline:3px solid var(--pwa-cyan,#5ee7ff);outline-offset:4px}
+.pwa-announcement{
+  position:fixed;z-index:10000;bottom:calc(105px + env(safe-area-inset-bottom,0px));left:50%;transform:translate(-50%,15px);
+  width:max-content;max-width:calc(100% - 36px);box-sizing:border-box;background:#100b26;color:#fff3fc;
+  border:1px solid #b2519b;border-radius:14px;padding:13px 18px;font:12px/1.6 system-ui,sans-serif;
+  opacity:0;pointer-events:none;transition:.2s;box-shadow:0 7px 25px #05020b55,0 0 24px #ff63b91c;text-align:center;
+}
+.pwa-announcement.is-visible{opacity:1;transform:translate(-50%,0)}
+.pwa-update{
+  position:fixed;z-index:1000;bottom:calc(105px + env(safe-area-inset-bottom,0px));left:50%;transform:translateX(-50%);
+  width:min(440px,calc(100% - 28px));padding:20px 22px;border-radius:20px;
+}
+.pwa-update-tape{float:right;width:64px;height:auto;margin:-2px -2px 7px 16px;transform:rotate(7deg);filter:drop-shadow(0 4px 7px #5ee7ff20)}
+.pwa-update h3{font:400 14px/1.5 Bungee,system-ui,sans-serif;color:var(--pwa-pink);margin:0 0 7px}
+.pwa-update p{margin:0;color:var(--pwa-muted);font-size:12px}
+.pwa-update>div{margin-top:16px;clear:both}
+
+/* This fallback appears only when the device has not saved a complete app yet. */
+.pwa-offline-page{
+  margin:0;background:#100b26;color:#fff3fc;font:14px/1.7 system-ui,-apple-system,sans-serif;min-height:100dvh;
+  display:grid;place-items:center;padding:30px 22px;box-sizing:border-box;
+  background-image:linear-gradient(180deg,#100b2699 0%,#100b26b8 40%,#100b26f5 100%),url('/assets/night-drive.jpg');
+  background-position:center;background-size:cover;background-attachment:fixed;
+}
+.pwa-offline-card{
+  position:relative;isolation:isolate;box-sizing:border-box;width:min(480px,100%);text-align:center;
+  border:1px solid #ba5a9b80;border-radius:28px;background:#100b26d9;backdrop-filter:blur(9px);
+  padding:36px 28px 30px;box-shadow:0 25px 75px #07031070,0 0 40px #ff63b910;overflow:hidden;
+}
+.pwa-offline-card::before{
+  content:'';position:absolute;z-index:-1;inset:auto -20px -30px;height:210px;
+  background:url('/assets/palms.svg') center bottom/100% auto no-repeat;opacity:.09;pointer-events:none;
+}
+.pwa-offline-brand{display:block;font:400 44px/1 Yellowtail,cursive;letter-spacing:-1px;color:#ff63b9;text-shadow:0 0 17px #ff63b940}
+.pwa-offline-kicker{display:block;font:400 8px/1.5 Bungee,system-ui,sans-serif;letter-spacing:2.5px;color:#5ee7ff;margin:10px 0 21px}
+.pwa-offline-tape{display:block;width:150px;height:auto;margin:0 auto 28px;transform:rotate(-8deg);filter:drop-shadow(0 8px 14px #ff63b930)}
+.pwa-offline-card h1{font:400 25px/1.3 Bungee,system-ui,sans-serif;letter-spacing:-.7px;margin:0 0 17px}
+.pwa-offline-card p{color:#cbbddd;margin:17px 0 26px;font-size:13px;line-height:1.8}
+.pwa-offline-card a{
+  text-decoration:none;display:inline-flex;align-items:center;justify-content:center;min-height:49px;padding:0 21px;
+  border:1px solid #ff9fd4;border-radius:13px;background:#ff63b9;color:#1a1030;box-shadow:0 5px 0 #6a2b74,0 0 23px #ff63b919;
+  font:400 10px/1.5 Bungee,system-ui,sans-serif;gap:13px;
+}
+.pwa-offline-card a:focus-visible{outline:3px solid #5ee7ff;outline-offset:5px}
+.pwa-offline-card a:active{transform:translateY(3px);box-shadow:0 2px 0 #6a2b74}
+.pwa-offline-card small{display:block;margin-top:25px;color:#b9a9ca;font-size:10px;line-height:1.8}
+@media(max-width:359px){.pwa-guide{padding:24px 21px}.pwa-guide h2{font-size:20px}.pwa-guide-actions{gap:8px}.pwa-guide-primary,.pwa-guide-secondary{padding-left:13px;padding-right:13px}.pwa-offline-card{padding:30px 22px}.pwa-offline-card h1{font-size:21px}}
+@media(prefers-reduced-motion:reduce){.pwa-announcement,.pwa-guide-primary,.pwa-guide-secondary{transition:none}}

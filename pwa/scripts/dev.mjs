@@ -1,5 +1,5 @@
 import http from 'node:http';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { LocalD1 } from './d1-local.mjs';
 await import('./embed-assets.mjs');
 const {default:worker}=await import('../worker/index.js');
@@ -9,6 +9,10 @@ const args=process.argv.slice(2),portIndex=args.indexOf('--port');
 const port=Number(portIndex>=0?args[portIndex+1]:process.env.PORT||4173);
 const server=http.createServer(async(req,res)=>{
   try{
+    if(req.method==='GET'&&req.url==='/__qa/responsive'){
+      res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});
+      return res.end(await readFile(new URL('../tests/responsive-preview.html',import.meta.url)));
+    }
     const chunks=[];for await(const part of req)chunks.push(part);
     const headers=new Headers();for(const [name,value] of Object.entries(req.headers)){if(name.startsWith('oai-authenticated-user-'))continue;if(Array.isArray(value))value.forEach(v=>headers.append(name,v));else if(value!==undefined)headers.set(name,value);}
     const origin=`http://${req.headers.host}`;

@@ -50,7 +50,7 @@ function route(request){
   if(path==='/download')return redirect('/app/?instalar=1');
   if(path.startsWith('/app/'))return asset(path==='/app/'?'/app/index.html':path,true);
   if(path==='/index.html')return redirect('/');
-  if(path==='/'||path==='/offline.html'||path==='/sw.js'||path==='/manifest.webmanifest'||path==='/pwa.js'||path==='/pwa.css'||path==='/promo.css'||path==='/promo.js'||path.startsWith('/icons/'))return asset(path==='/'?'/index.html':path);
+  if(path==='/'||path==='/offline.html'||path==='/sw.js'||path==='/manifest.webmanifest'||path==='/pwa.js'||path==='/pwa.css'||path==='/promo.css'||path==='/promo.js'||path.startsWith('/icons/')||path.startsWith('/assets/'))return asset(path==='/'?'/index.html':path);
   return new Response('Não encontrado',{status:404,headers:{'Content-Type':'text/plain; charset=utf-8'}});
 }
 export default {

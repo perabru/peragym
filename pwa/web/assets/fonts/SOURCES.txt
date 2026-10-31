@@ -1,0 +1,11 @@
+Self-hosted original font binaries from the official Google Fonts repository.
+
+Bungee Regular
+https://github.com/google/fonts/tree/main/ofl/bungee
+License: SIL Open Font License 1.1; see BUNGEE-OFL.txt.
+
+Yellowtail Regular
+https://github.com/google/fonts/tree/main/apache/yellowtail
+License: Apache License 2.0; see YELLOWTAIL-LICENSE.txt.
+
+Both files are unmodified and retain their original Portuguese character coverage.
