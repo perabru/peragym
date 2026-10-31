@@ -1,66 +1,38 @@
 # PeraGym
 
-Aplicativo Android de fichas de treino com **banco SQLite local**, sem cadastro e sem depender de internet. Identidade visual em coral, amarelo e vinho, adaptada dos cards enviados como referência.
+Aplicativo em **HTML, CSS e JavaScript**, instalável como **PWA no Android e no iOS**, com banco IndexedDB local e gráficos de evolução de cargas e de peso corporal.
 
-## Instalar
+**[Abrir página promocional e PeraGym](https://peragym-treino.perabru.chatgpt.site/)**
 
-**[Baixar PeraGym 1.0.0 para Android](https://github.com/perabru/peragym/raw/refs/heads/main/downloads/PeraGym-1.0.0.apk)**
+A implementação atual está em [pwa/](pwa/). A página promocional é [pwa/web/index.html](pwa/web/index.html), e o aplicativo fica em [pwa/web/app/](pwa/web/app/).
 
-Requer Android 8.0 ou superior. Abra o APK no celular e permita a instalação pelo aplicativo utilizado para baixar o arquivo, caso o Android solicite. Esta versão usa assinatura de desenvolvimento para instalação direta.
+Inclui fichas/exercícios editáveis, cargas decimais em kg, loading, tema claro/escuro, cronômetros, histórico, gráficos SVG e backup local.
 
-## Recursos
+## Compra com Pix
 
-- Criar, editar e excluir fichas de treino, com confirmação antes de excluir.
-- Adicionar e remover exercícios; registrar séries, repetições, descanso e observações.
-- Ajustar cargas em quilos, inclusive valores como **12,5 kg**; botões rápidos de −1 kg e +1 kg.
-- Tela de loading animada, inspirada no indicador de pulso fornecido.
-- Tema claro e escuro com toggle de sol/lua e preferência salva no aparelho.
-- Busca por nome da ficha e foco muscular.
-- Cronômetro de treino, marcação de exercícios concluídos e temporizador de descanso.
-- Histórico de treinos concluídos e acompanhamento da semana.
+A chave é `bruno.pera@unifesp.br`. Os arquivos do PWA são protegidos pelo servidor e liberados após confirmação manual do recebimento no banco. O responsável define o preço e confere os pedidos na área administrativa do site, acessada com sua conta ChatGPT. A chave Pix sozinha não confirma pagamentos automaticamente.
 
-O aplicativo começa sem fichas ou resultados fictícios. Na primeira abertura, toque em **Criar minha primeira ficha**, preencha os exercícios e salve. Toque no valor da carga para informar um peso exato. Os ajustes são salvos automaticamente.
+**As vendas começam pausadas até que o preço seja definido no painel.** Há QR Code, Pix Copia e Cola, token privado de recuperação e bloqueio de download antes da aprovação.
 
-## Dados locais
+## Instalação
 
-As fichas, exercícios e sessões ficam em `peragym.db`, no armazenamento privado do aplicativo. A preferência de tema fica em SharedPreferences. Nenhuma permissão de internet, conta, anúncio ou serviço remoto é utilizado.
+Após liberar o acesso, abra o aplicativo no celular:
 
-Excluir uma ficha remove seus exercícios e mantém os treinos já concluídos no histórico. Desinstalar o aplicativo ou apagar seus dados nas configurações do Android remove o banco local. O backup automático do Android está desativado.
+- Android/Chrome: **Instalar aplicativo**.
+- iOS/Safari: **Compartilhar → Adicionar à Tela de Início**.
 
-## Código e compilação
+A instalação é confirmada no próprio aparelho. Treinos e peso não sincronizam entre dispositivos; use o backup local ao trocar de navegador/aparelho.
 
-Projeto Java com Activity Android, interface HTML/CSS/JavaScript empacotada no APK e SQLiteOpenHelper. O WebView só carrega os arquivos internos do aplicativo. O banco Android não usa localStorage; o adaptador de localStorage existe apenas para prévia e testes da interface no navegador.
-
-- Android: `app/src/main/java/br/com/peragym/`
-- Interface: `app/src/main/assets/`
-- Testes SQLite no Android: `app/src/androidTest/`
-- Testes de interface: `tests/ui.test.cjs`
-- APK e checksum: `downloads/`
-
-Com JDK 17 e Android SDK 35 instalados:
+## Código e testes
 
 ```sh
-./gradlew assembleDebug assembleDebugAndroidTest lintDebug
+cd pwa
+npm ci
+npm test
+npm run build
+npm run validate
 ```
 
-Para executar os testes SQLite em um emulador ou aparelho de testes conectado:
+Os 26 testes cobrem IndexedDB, backup, gráficos, uso offline e controle de pagamento. A implementação hospedada usa Worker/D1 para os pedidos e a identidade Sites para administrar. Hospedagem puramente estática não verifica recebimentos nem protege os downloads. Consulte [pwa/README.md](pwa/README.md).
 
-```sh
-./gradlew connectedDebugAndroidTest
-```
-
-Para testar a interface com Node.js instalado:
-
-```sh
-npm install
-npx playwright install chromium
-npm run test:ui
-```
-
-Os testes executam os fluxos de criação, edição e exclusão de fichas, cargas decimais, tema persistente, busca, sessões e histórico. Também verificam ausência de rolagem horizontal em telas de 360 × 800 e 1280 × 900. As capturas de verificação ficam na pasta temporária do sistema.
-
-Consulte [tools/BUILD.md](tools/BUILD.md) para instruções completas. O GitHub Actions compila o aplicativo, executa o Android Lint e testa o banco de dados em um emulador. Os artefatos produzidos pelo CI podem usar uma assinatura diferente do APK fornecido em `downloads/`; para atualizações que preservem os dados, mantenha a mesma chave de assinatura.
-
-## Referências visuais
-
-Adaptações dos arquivos enviados: cards de KSAplay (paleta, paisagem e formas), botão de Voxybuns, toggle de JkHuger e loading de milley69, identificados nos arquivos como referências do Uiverse.io. Interface e lógica foram desenvolvidas para o PeraGym. Os anexos de música e Tinkercad não são dependências do aplicativo.
+O código Android original é mantido como versão anterior. O APK foi retirado da distribuição principal deste repositório; arquivos e links publicados em commits anteriores continuam no histórico Git. O controle de acesso se aplica à nova versão PWA.

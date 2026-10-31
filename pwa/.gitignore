@@ -1,0 +1,11 @@
+node_modules/
+dist/
+outputs/
+.sites-runtime/
+.wrangler/
+.env*
+.dev.vars*
+*.log
+site.tar.gz
+!.env.example
+worker/index.js
