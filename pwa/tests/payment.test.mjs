@@ -1,267 +1,167 @@
 import assert from 'node:assert/strict';
 import {after, before, test} from 'node:test';
-import {DatabaseSync} from 'node:sqlite';
-import {mkdtemp, readFile, readdir, rm} from 'node:fs/promises';
+import {mkdtemp, rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {dirname, join, resolve} from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
-import {createHash} from 'node:crypto';
 import {build} from 'esbuild';
 
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const origin='https://peragym.example';
-const cookieName='__Host-peragym_session';
 const assets={
-  '/index.html':{body:'<h1>PeraGym promoção</h1>',type:'text/html; charset=utf-8'},
-  '/app/index.html':{body:'<h1>PeraGym privado</h1>',type:'text/html; charset=utf-8'},
+  '/index.html':{body:'<h1>PeraGym grátis</h1>',type:'text/html; charset=utf-8'},
+  '/app/index.html':{body:'<h1>Seu treino gratuito</h1>',type:'text/html; charset=utf-8'},
   '/app/style.css':{body:'body { color: #974859 }',type:'text/css; charset=utf-8'},
-  '/app/app.js':{body:'const privateApplication = true;',type:'application/javascript; charset=utf-8'},
-  '/admin/index.html':{body:'<h1>Administração</h1>',type:'text/html; charset=utf-8'},
+  '/app/app.js':{body:'const freeApplication = true;',type:'application/javascript; charset=utf-8'},
+  '/app/db.js':{body:'const deviceLocalDatabase = true;',type:'application/javascript; charset=utf-8'},
+  '/app/charts.js':{body:'const localCharts = true;',type:'application/javascript; charset=utf-8'},
   '/sw.js':{body:'self.addEventListener("fetch", () => {});',type:'application/javascript; charset=utf-8'},
+  '/manifest.webmanifest':{body:'{"start_url":"/app/"}',type:'application/manifest+json'},
+  '/icons/icon-192.png':{body:'UEc=',encoding:'base64',type:'image/png'},
 };
-let temporaryDirectory,worker,paymentModule,sqlMigrations;
-
-/** D1's asynchronous result shape over Node's real SQLite engine. */
-class LocalD1 {
-  constructor(){this.sqlite=new DatabaseSync(':memory:');this.sqlite.exec('PRAGMA foreign_keys = ON');}
-  prepare(sql){
-    const database=this.sqlite;
-    const statement=(parameters=[])=>({
-      bind(...values){return statement(values);},
-      async first(column){const row=database.prepare(sql).get(...parameters);return row?(column?row[column]:row):null;},
-      async all(){return {success:true,results:database.prepare(sql).all(...parameters),meta:{changes:0}};},
-      async run(){const result=database.prepare(sql).run(...parameters);return {success:true,meta:{changes:Number(result.changes),last_row_id:Number(result.lastInsertRowid)}};},
-    });
-    return statement();
-  }
-  close(){this.sqlite.close();}
-}
+let temporaryDirectory,worker,workerModule;
 
 before(async()=>{
-  temporaryDirectory=await mkdtemp(join(tmpdir(),'peragym-payments-'));
+  temporaryDirectory=await mkdtemp(join(tmpdir(),'peragym-free-tests-'));
   const output=join(temporaryDirectory,'worker.mjs');
   await build({entryPoints:[join(root,'server/worker.js')],outfile:output,bundle:true,format:'esm',platform:'neutral',define:{__PERAGYM_ASSETS__:JSON.stringify(assets)},logLevel:'silent'});
-  paymentModule=await import(pathToFileURL(output).href);
-  worker=paymentModule.default;
-  const directory=join(root,'drizzle');
-  sqlMigrations=await Promise.all((await readdir(directory)).filter(name=>name.endsWith('.sql')).sort().map(name=>readFile(join(directory,name),'utf8')));
-  assert.ok(sqlMigrations.length,'Generated SQL migrations must be included in the project.');
+  workerModule=await import(pathToFileURL(output).href);
+  worker=workerModule.default;
 });
-
 after(async()=>{if(temporaryDirectory)await rm(temporaryDirectory,{recursive:true,force:true});});
 
 function harness(){
-  const DB=new LocalD1();
-  for(const sql of sqlMigrations)DB.sqlite.exec(sql);
-  const env={DB,ADMIN_EMAIL:'owner@example.com'};
+  let databaseCalls=0;
+  const neverUseDatabase=new Proxy({}, {get(){databaseCalls++;throw new Error('The free application must never query the former purchase database.');}});
+  const env={DB:neverUseDatabase,ADMIN_EMAIL:'former-owner@example.com'};
   const request=async(path,{method='GET',body,headers={}}={})=>{
     const requestHeaders=new Headers(headers);
-    if(body!==undefined){requestHeaders.set('Content-Type','application/json');if(!requestHeaders.has('Origin'))requestHeaders.set('Origin',origin);}
+    if(body!==undefined){requestHeaders.set('Content-Type','application/json');requestHeaders.set('Origin',origin);}
     const response=await worker.fetch(new Request(origin+path,{method,headers:requestHeaders,body:body===undefined?undefined:JSON.stringify(body)}),env,{});
+    assert.equal(databaseCalls,0,'No free-app or donation request may read or write the old purchase database.');
+    assert.equal(response.headers.get('Set-Cookie'),null,'The free app must not issue a purchase/license cookie.');
     return response;
   };
-  return {DB,env,request,close:()=>DB.close()};
+  return {request};
 }
 
-const ownerHeaders={
-  'oai-authenticated-user-id':'site-owner-123',
-  'oai-authenticated-user-email':'owner@example.com',
-  'oai-authenticated-user-full-name':'Responsável PeraGym',
+const oldIdentity={
+  'oai-authenticated-user-id':'former-owner-id',
+  'oai-authenticated-user-email':'former-owner@example.com',
+  Cookie:'__Host-peragym_session=previous-license-cookie',
+  Authorization:`Bearer ${'A'.repeat(43)}`,
 };
-const otherHeaders={
-  'oai-authenticated-user-id':'site-other-456',
-  'oai-authenticated-user-email':'other@example.com',
-};
-const auth=token=>({Authorization:`Bearer ${token}`});
-const hashed=value=>createHash('sha256').update(value).digest('hex');
 
-async function enableSales(h,priceCents=2990){
-  const response=await h.request('/api/admin/config',{method:'POST',headers:ownerHeaders,body:{priceCents,salesEnabled:true}});
-  assert.equal(response.status,200,await response.clone().text());
-}
-
-async function newOrder(h,overrides={}){
-  const response=await h.request('/api/orders',{method:'POST',body:{name:'Pessoa Compradora',email:'buyer@example.com',...overrides}});
-  assert.equal(response.status,201,await response.clone().text());
-  return response.json();
-}
-
-async function approve(h,order,reference='E2E-EXTRATO-TESTE-001',headers=ownerHeaders){
-  return h.request(`/api/admin/orders/${order.id}/approve`,{method:'POST',headers,body:{bankReference:reference,confirmedInBank:true}});
-}
-
-test('new installation has no invented price and refuses purchases while paused',async()=>{
-  const h=harness();try{
-    const configuration=await (await h.request('/api/config')).json();
-    assert.equal(configuration.priceCents,null);
-    assert.equal(configuration.salesEnabled,false);
-    assert.equal(configuration.pixKey,'bruno.pera@unifesp.br');
-    assert.equal(configuration.paymentMode,'manual');
-    const order=await h.request('/api/orders',{method:'POST',body:{name:'Comprador',email:'buyer@example.com',priceCents:1}});
-    assert.equal(order.status,409);
-    assert.equal(h.DB.sqlite.prepare('SELECT COUNT(*) AS total FROM orders').get().total,0);
-  }finally{h.close();}
+test('configuration advertises free access and an optional fixed donation without database setup',async()=>{
+  const h=harness(),response=await h.request('/api/config');
+  assert.equal(response.status,200);
+  const value=await response.json();
+  assert.equal(value.freeAccess,true);assert.equal(value.priceCents,0);assert.equal(value.salesEnabled,false);
+  assert.equal(value.donationAmountCents,199);assert.equal(value.paymentMode,'donation');assert.equal(value.currency,'BRL');
+  assert.equal(value.pixKey,'bruno.pera@unifesp.br');assert.equal(value.appUrl,'/app/');assert.equal(value.downloadUrl,'/download');
 });
 
-test('owner bootstrap requires trusted identity and binds the stable user ID',async()=>{
-  const h=harness();try{
-    assert.equal((await h.request('/api/admin/state')).status,401);
-    assert.equal((await h.request('/api/admin/state',{headers:otherHeaders})).status,403);
-    assert.equal(h.DB.sqlite.prepare("SELECT value FROM settings WHERE key = 'admin_user_id'").get(),undefined);
-    const first=await h.request('/api/admin/state',{headers:ownerHeaders});
-    assert.equal(first.status,200);
-    assert.equal(h.DB.sqlite.prepare("SELECT value FROM settings WHERE key = 'admin_user_id'").get().value,'site-owner-123');
-    const changedEmail={...ownerHeaders,'oai-authenticated-user-email':'renamed@example.com'};
-    assert.equal((await h.request('/api/admin/state',{headers:changedEmail})).status,200,'Stable identity remains the administrator after an email change.');
-    const wrongIdSameEmail={...ownerHeaders,'oai-authenticated-user-id':'another-user'};
-    assert.equal((await h.request('/api/admin/state',{headers:wrongIdSameEmail})).status,403,'An email match cannot replace the established owner.');
-  }finally{h.close();}
+test('session is free for an anonymous visitor and never requires a license or owner identity',async()=>{
+  const h=harness();
+  for(const headers of [{},oldIdentity]){
+    const response=await h.request('/api/session',{headers});assert.equal(response.status,200);
+    const session=await response.json();assert.equal(session.licensed,true);assert.equal(session.freeAccess,true);assert.equal(session.owner,false);
+  }
+  const response=await worker.fetch(new Request(origin+'/api/session'),{},{});
+  assert.equal(response.status,200,'The Worker also works when no DB binding or owner setting exists.');
+  assert.equal((await response.json()).freeAccess,true);
 });
 
-test('the buyer cannot tamper with price, status or stored token and cannot enumerate orders',async()=>{
-  const h=harness();try{
-    await enableSales(h,2990);
-    const order=await newOrder(h,{priceCents:1,status:'paid'});
-    assert.equal(order.priceCents,2990);
-    assert.equal(order.status,'pending');
-    assert.match(order.accessToken,/^[A-Za-z0-9_-]{43}$/);
-    assert.ok(order.qrDataUrl.startsWith('data:image/svg+xml;base64,'));
-    assert.ok(order.pixPayload.includes('540529.90'));
-    const stored=h.DB.sqlite.prepare('SELECT * FROM orders WHERE id = ?').get(order.id);
-    assert.equal(stored.price_cents,2990);
-    assert.equal(stored.status,'pending');
-    assert.notEqual(stored.token_hash,order.accessToken);
-    assert.equal(stored.token_hash,hashed(order.accessToken));
-    assert.equal((await h.request(`/api/orders/${order.id}`)).status,404);
-    assert.equal((await h.request(`/api/orders/${order.id}`,{headers:auth('A'.repeat(43))})).status,404);
-    const authorized=await h.request(`/api/orders/${order.id}`,{headers:auth(order.accessToken)});
-    assert.equal(authorized.status,200);
-    const detail=await authorized.json();
-    assert.equal(detail.email,'buyer@example.com');
-    assert.equal('token_hash' in detail,false);
-    assert.equal('accessToken' in detail,false);
-    assert.equal((await h.request('/api/orders')).status,404);
-  }finally{h.close();}
+test('donation returns a valid R$1.99 Pix and leaves app access independent of contribution',async()=>{
+  const h=harness(),response=await h.request('/api/donation?amountCents=999999&paid=true');
+  assert.equal(response.status,200);
+  const donation=await response.json();
+  assert.equal(donation.amountCents,199);assert.equal(donation.optional,true);assert.equal(donation.currency,'BRL');
+  assert.equal(donation.pixKey,'bruno.pera@unifesp.br');assert.equal(donation.appUrl,'/app/');assert.equal(donation.downloadUrl,'/download');
+  assert.ok(donation.pixPayload.includes('54041.99'),'Pix payload carries precisely R$1.99.');
+  assert.ok(donation.pixPayload.includes('PERAGYMAPOIO'),'The optional contribution uses the donation identifier.');
+  assert.ok(donation.pixPayload.includes('bruno.pera@unifesp.br'));
+  assert.equal(donation.pixPayload.slice(-4),workerModule.crc16(donation.pixPayload.slice(0,-4)));
+  assert.ok(donation.qrDataUrl.startsWith('data:image/svg+xml;base64,'));
+  const svg=Buffer.from(donation.qrDataUrl.split(',')[1],'base64').toString('utf8');assert.ok(svg.includes('<svg'));
+  assert.equal('accessToken' in donation,false);assert.equal('orderId' in donation,false);assert.equal('claimUrl' in donation,false);
+  const app=await h.request('/app/');assert.equal(app.status,200,'Viewing the app does not wait for a donation receipt.');
 });
 
-test('unpaid buyers cannot claim, download or retrieve any protected app asset',async()=>{
-  const h=harness();try{
-    await enableSales(h);
-    const order=await newOrder(h);
-    const claim=await h.request(`/api/orders/${order.id}/claim`,{method:'POST',headers:{...auth(order.accessToken),Origin:origin}});
-    assert.equal(claim.status,403);
-    assert.equal(claim.headers.get('Set-Cookie'),null);
-    assert.equal(h.DB.sqlite.prepare('SELECT COUNT(*) AS total FROM licenses').get().total,0);
-    for(const path of ['/app/','/app/index.html','/app/style.css','/app/app.js','/download']){
-      const response=await h.request(path,{headers:auth(order.accessToken)});
-      assert.ok([303,403].includes(response.status),path);
-      assert.equal(response.headers.get('X-PeraGym-Protected'),null,path);
-      assert.equal((await response.text()).includes('privateApplication'),false,path);
+test('all application files are available without payment, login, cookies or a server database',async()=>{
+  const h=harness();
+  for(const path of ['/app/','/app/index.html','/app/style.css','/app/app.js','/app/db.js','/app/charts.js']){
+    const response=await h.request(path);
+    assert.equal(response.status,200,path);assert.equal(response.headers.get('X-PeraGym-App'),'1',path);
+    assert.equal(response.headers.get('X-PeraGym-Protected'),null,path);
+    assert.equal(response.headers.get('Location'),null,path);
+  }
+  const oldCookie=await h.request('/app/app.js',{headers:oldIdentity});assert.equal(oldCookie.status,200);
+  assert.match(await oldCookie.text(),/freeApplication/);
+});
+
+test('download leads directly to app installation and never to a checkout page',async()=>{
+  const h=harness(),response=await h.request('/download');
+  assert.equal(response.status,303);
+  assert.equal(response.headers.get('Location'),'/app/?instalar=1');
+  const destination=await h.request(response.headers.get('Location'));assert.equal(destination.status,200);
+});
+
+test('old order and claim endpoints are retired and cannot create records or unlock flows',async()=>{
+  const h=harness();
+  const routes=[
+    ['/api/orders','POST'],
+    ['/api/orders/PGABCDEF0123456789ABCD','GET'],
+    ['/api/orders/PGABCDEF0123456789ABCD/claim','POST'],
+  ];
+  for(const [path,method] of routes){
+    const response=await h.request(path,{method,headers:oldIdentity,body:method==='POST'?{name:'Legacy buyer',email:'legacy@example.com',paid:true}:undefined});
+    assert.equal(response.status,410,path);const result=await response.json();
+    assert.equal(result.appUrl,'/app/',path);assert.ok(result.error,path);
+    assert.equal('accessToken' in result,false,path);assert.equal('claimUrl' in result,false,path);
+  }
+});
+
+test('legacy bank approval and admin APIs are retired even with a former owner identity',async()=>{
+  const h=harness();
+  for(const path of ['/api/admin/state','/api/admin/config','/api/admin/orders/PGABCDEF0123456789ABCD/approve']){
+    const method=path.endsWith('/state')?'GET':'POST';
+    const response=await h.request(path,{method,headers:oldIdentity,body:method==='POST'?{confirmedInBank:true,bankReference:'OLD-REFERENCE',priceCents:199,salesEnabled:true}:undefined});
+    assert.equal(response.status,410,path);assert.equal((await response.json()).appUrl,'/app/',path);
+  }
+  for(const path of ['/admin','/admin/']){
+    const response=await h.request(path,{headers:oldIdentity});assert.equal(response.status,303,path);assert.equal(response.headers.get('Location'),'/',path);
+  }
+});
+
+test('read-only free and donation APIs reject state-changing methods',async()=>{
+  const h=harness();
+  for(const path of ['/api/config','/api/donation','/api/session']){
+    for(const method of ['POST','PATCH','DELETE']){
+      const response=await h.request(path,{method,body:{priceCents:100,amountCents:100,status:'paid'}});
+      assert.equal(response.status,405,`${method} ${path}`);
     }
-    assert.equal((await (await h.request('/api/session')).json()).licensed,false);
-  }finally{h.close();}
+  }
 });
 
-test('approval requires owner, bank confirmation and a unique bank reference',async()=>{
-  const h=harness();try{
-    await enableSales(h);
-    const first=await newOrder(h),second=await newOrder(h,{email:'second@example.com'});
-    assert.equal((await approve(h,first,'E2E-EXTRATO-TESTE-001',otherHeaders)).status,403);
-    const noAcknowledgment=await h.request(`/api/admin/orders/${first.id}/approve`,{method:'POST',headers:ownerHeaders,body:{bankReference:'E2E-EXTRATO-TESTE-001'}});
-    assert.equal(noAcknowledgment.status,400);
-    const shortReference=await h.request(`/api/admin/orders/${first.id}/approve`,{method:'POST',headers:ownerHeaders,body:{bankReference:'ABC',confirmedInBank:true}});
-    assert.equal(shortReference.status,400);
-    assert.equal((await approve(h,first,' e2e-extrato-teste-001 ')).status,200);
-    const stored=h.DB.sqlite.prepare('SELECT status,bank_reference,approved_by FROM orders WHERE id = ?').get(first.id);
-    assert.equal(stored.status,'paid');assert.equal(stored.bank_reference,'E2E-EXTRATO-TESTE-001');assert.equal(stored.approved_by,'site-owner-123');
-    assert.equal((await approve(h,first,'E2E-EXTRATO-TESTE-001')).status,200,'Identical manual confirmation is idempotent.');
-    assert.equal((await approve(h,first,'DIFFERENT-BANK-REFERENCE')).status,409);
-    assert.equal((await approve(h,second,'E2E-EXTRATO-TESTE-001')).status,409,'A single received transfer cannot unlock two orders.');
-    assert.equal(h.DB.sqlite.prepare('SELECT status FROM orders WHERE id = ?').get(second.id).status,'pending');
-    const rejection=await h.request(`/api/admin/orders/${first.id}/reject`,{method:'POST',headers:ownerHeaders,body:{reason:'Não foi localizado'}});
-    assert.equal(rejection.status,409,'A paid order cannot be rejected through the pending review action.');
-  }finally{h.close();}
+test('HEAD keeps the same free routes and headers while returning no body',async()=>{
+  const h=harness();
+  for(const path of ['/api/config','/api/donation','/api/session','/app/','/app/app.js','/']){
+    const response=await h.request(path,{method:'HEAD'});assert.equal(response.status,200,path);assert.equal(await response.text(),'',path);
+  }
 });
 
-test('paid claim issues a secure HttpOnly cookie and gates app assets server-side',async()=>{
-  const h=harness();try{
-    await enableSales(h);
-    const order=await newOrder(h);assert.equal((await approve(h,order)).status,200);
-    const claim=await h.request(`/api/orders/${order.id}/claim`,{method:'POST',headers:{...auth(order.accessToken),Origin:origin}});
-    assert.equal(claim.status,200);
-    const header=claim.headers.get('Set-Cookie');
-    assert.match(header,new RegExp(`^${cookieName}=[A-Za-z0-9_-]{43};`));
-    assert.match(header,/; HttpOnly;/);assert.match(header,/; Secure;/);assert.match(header,/; SameSite=Lax;/);assert.match(header,/; Path=\//);
-    const cookie=header.split(';')[0],token=cookie.slice(cookieName.length+1);
-    const stored=h.DB.sqlite.prepare('SELECT * FROM licenses').get();
-    assert.equal(stored.token_hash,hashed(token));assert.notEqual(stored.token_hash,token);
-    assert.equal((await (await h.request('/api/session',{headers:{Cookie:cookie}})).json()).licensed,true);
-    for(const path of ['/app/','/app/index.html','/app/style.css','/app/app.js']){
-      const response=await h.request(path,{headers:{Cookie:cookie}});
-      assert.equal(response.status,200,path);assert.equal(response.headers.get('X-PeraGym-Protected'),'1',path);
-      assert.equal(response.headers.get('Cache-Control'),'private, no-store',path);
-    }
-    const fake=await h.request('/app/style.css',{headers:{Cookie:`${cookieName}=${'A'.repeat(43)}`}});
-    assert.equal(fake.status,403);
-    const duplicate=await h.request('/app/style.css',{headers:{Cookie:`${cookie}; ${cookie}`}});
-    assert.equal(duplicate.status,403,'Duplicate cookie names fail closed.');
-    assert.equal((await h.request('/download',{headers:{Cookie:cookie}})).headers.get('Location'),'/app/?instalar=1');
-  }finally{h.close();}
+test('unknown paths remain unavailable and security headers are retained',async()=>{
+  const h=harness();
+  assert.equal((await h.request('/app/not-a-real-file.js')).status,404);
+  assert.equal((await h.request('/api/not-a-real-route')).status,404);
+  const response=await h.request('/');assert.equal(response.status,200);
+  assert.equal(response.headers.get('X-Content-Type-Options'),'nosniff');
+  const policy=response.headers.get('Content-Security-Policy');assert.ok(policy.includes("script-src 'self'"));assert.ok(policy.includes("object-src 'none'"));assert.equal(policy.includes("'unsafe-inline'"),false);
+  const sw=await h.request('/sw.js');assert.equal(sw.headers.get('Service-Worker-Allowed'),'/');assert.equal(sw.headers.get('Cache-Control'),'no-cache');
 });
 
-test('cross-origin writes fail before altering configuration, orders or licenses',async()=>{
-  const h=harness();try{
-    await enableSales(h);
-    const order=await newOrder(h);assert.equal((await approve(h,order)).status,200);
-    const badConfig=await h.request('/api/admin/config',{method:'POST',headers:{...ownerHeaders,Origin:'https://attacker.example'},body:{priceCents:100,salesEnabled:false}});
-    assert.equal(badConfig.status,403);
-    const badOrder=await h.request('/api/orders',{method:'POST',headers:{Origin:'https://attacker.example'},body:{name:'Outra pessoa',email:'third@example.com'}});
-    assert.equal(badOrder.status,403);
-    const badClaim=await h.request(`/api/orders/${order.id}/claim`,{method:'POST',headers:{...auth(order.accessToken),Origin:'https://attacker.example'}});
-    assert.equal(badClaim.status,403);
-    const badFetchSite=await h.request('/api/admin/config',{method:'POST',headers:{...ownerHeaders,'Sec-Fetch-Site':'cross-site'},body:{priceCents:100,salesEnabled:false}});
-    assert.equal(badFetchSite.status,403);
-    assert.equal(h.DB.sqlite.prepare('SELECT COUNT(*) AS total FROM orders').get().total,1);
-    assert.equal(h.DB.sqlite.prepare('SELECT COUNT(*) AS total FROM licenses').get().total,0);
-    assert.equal((await (await h.request('/api/config')).json()).priceCents,2990);
-  }finally{h.close();}
-});
-
-test('owner can pause new sales without changing existing orders or granting access',async()=>{
-  const h=harness();try{
-    await enableSales(h,1990);const order=await newOrder(h);
-    const response=await h.request('/api/admin/config',{method:'POST',headers:ownerHeaders,body:{priceCents:3990,salesEnabled:false}});
-    assert.equal(response.status,200);
-    const blocked=await h.request('/api/orders',{method:'POST',body:{name:'Nova pessoa',email:'new@example.com'}});
-    assert.equal(blocked.status,409);
-    const original=await (await h.request(`/api/orders/${order.id}`,{headers:auth(order.accessToken)})).json();
-    assert.equal(original.priceCents,1990);assert.equal(original.status,'pending');
-    assert.equal((await h.request(`/api/orders/${order.id}/claim`,{method:'POST',headers:auth(order.accessToken)})).status,403);
-  }finally{h.close();}
-});
-
-test('admin responses exclude buyer access tokens and public routes carry security headers',async()=>{
-  const h=harness();try{
-    await enableSales(h);const order=await newOrder(h);
-    const stateResponse=await h.request('/api/admin/state',{headers:ownerHeaders});
-    const text=await stateResponse.text();
-    assert.equal(text.includes(order.accessToken),false);assert.equal(text.includes(hashed(order.accessToken)),false);
-    assert.equal(stateResponse.headers.get('Cache-Control'),'private, no-store');
-    assert.equal(stateResponse.headers.get('X-Content-Type-Options'),'nosniff');
-    const landing=await h.request('/');assert.equal(landing.status,200);
-    const csp=landing.headers.get('Content-Security-Policy');assert.ok(csp.includes("script-src 'self'"));assert.ok(csp.includes("object-src 'none'"));
-    const sw=await h.request('/sw.js');assert.equal(sw.headers.get('Service-Worker-Allowed'),'/');assert.equal(sw.headers.get('Cache-Control'),'no-cache');
-  }finally{h.close();}
-});
-
-
-test('Pix CRC matches the Banco Central reference vector and rejects invalid amounts',()=>{
+test('Pix CRC still matches the Banco Central reference vector',()=>{
   const reference='00020126580014br.gov.bcb.pix0136123e4567-e12b-12d1-a456-4266554400005204000053039865802BR5913Fulano de Tal6008BRASILIA62070503***6304';
-  assert.equal(paymentModule.crc16(reference),'1D3D');
-  const payload=paymentModule.pixPayload(2990,'PGABCDEF0123456789ABCD');
-  assert.equal(payload.slice(-4),paymentModule.crc16(payload.slice(0,-4)));
-  assert.ok(payload.includes('bruno.pera@unifesp.br'));
-  assert.throws(()=>paymentModule.pixPayload(99,'ORDER1'));
-  assert.throws(()=>paymentModule.pixPayload(2990.1,'ORDER1'));
-  assert.throws(()=>paymentModule.pixPayload(2990,'INVALID-TXID'));
+  assert.equal(workerModule.crc16(reference),'1D3D');
 });

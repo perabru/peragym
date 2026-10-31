@@ -47,15 +47,23 @@ function harness(network) {
   };
 }
 
-const authorizedAsset = body => new Response(body,{headers:{'X-PeraGym-Protected':'1','Content-Type':'text/javascript'}});
+function appAsset(path, {marker = true, legacy = false} = {}) {
+  const type = path.endsWith('.css') ? 'text/css' : path.endsWith('.js') ? 'text/javascript' : 'text/html';
+  const headers = {'Content-Type': `${type}; charset=utf-8`};
+  if(marker) headers['X-PeraGym-App']='1';
+  if(legacy) headers['X-PeraGym-Protected']='1';
+  return new Response(path,{headers});
+}
 
-test('manifest has real install icons, protected start URL, and platform-compatible scope', async () => {
+async function seedOldShell(harness) {
+  const cache = await harness.cacheApi.open('peragym-2.0.0-app');
+  for (const path of ['/app/index.html','/app/style.css','/app/app.js','/app/db.js','/app/charts.js']) await cache.put(`${origin}${path}`,appAsset(path,{marker:false,legacy:true}));
+}
+
+test('manifest retains install icons, free app start URL and compatible scope', async () => {
   const manifest = JSON.parse(await readFile(new URL('../web/manifest.webmanifest',import.meta.url),'utf8'));
-  assert.equal(manifest.start_url,'/app/');
-  assert.equal(manifest.id,'/app/');
-  assert.equal(manifest.scope,'/');
-  assert.equal(manifest.display,'standalone');
-  assert.equal(manifest.lang,'pt-BR');
+  assert.equal(manifest.start_url,'/app/');assert.equal(manifest.id,'/app/');assert.equal(manifest.scope,'/');
+  assert.equal(manifest.display,'standalone');assert.equal(manifest.lang,'pt-BR');
   assert(manifest.icons.some(icon=>icon.sizes==='192x192'&&icon.purpose==='any'));
   assert(manifest.icons.some(icon=>icon.sizes==='512x512'&&icon.purpose==='maskable'));
   for(const icon of manifest.icons){
@@ -66,66 +74,82 @@ test('manifest has real install icons, protected start URL, and platform-compati
   }
 });
 
-test('a browser message cannot unlock a download without a licensed server session', async () => {
+test('free offline preparation downloads the public app without calling account or payment APIs', async () => {
   const downloads=[];
   const h=harness(async url=>{
-    if(new URL(url).pathname==='/api/session')return Response.json({licensed:false});
-    downloads.push(url);return authorizedAsset('sensitive app');
-  });
-  await h.prepare();
-  assert.equal(downloads.length,0);
-  assert.equal(h.messages.at(-1).type,'PERAGYM_LICENSE_REQUIRED');
-  assert.equal([...h.cacheData.keys()].filter(name=>name.endsWith('-app')).length,0);
-});
-
-test('licensed shell is prepared, and then opens offline without calling the server', async () => {
-  let online=true;
-  const h=harness(async url=>{
-    if(!online)throw new Error('offline');
-    return new URL(url).pathname==='/api/session'?Response.json({licensed:true}):authorizedAsset(new URL(url).pathname);
+    const path=new URL(url).pathname;downloads.push(path);
+    if(path.startsWith('/api/'))throw new Error('No account or donation service is available');
+    return appAsset(path);
   });
   await h.prepare();
   assert.equal(h.messages.at(-1).type,'PERAGYM_OFFLINE_READY');
-  online=false;
+  assert.deepEqual(downloads.sort(),['/app/app.js','/app/charts.js','/app/db.js','/app/index.html','/app/style.css']);
+});
+
+test('complete app opens offline with no session, cookie or donation requirement', async () => {
+  let online=true;
+  const h=harness(async url=>{
+    if(!online)throw new Error('offline');
+    return appAsset(new URL(url).pathname);
+  });
+  await h.prepare();online=false;
   assert.equal(await (await h.fetch('/app/','navigate')).text(),'/app/index.html');
   assert.equal(await (await h.fetch('/app/db.js')).text(),'/app/db.js');
 });
 
-test('ordinary 200 pages and redirects never become a paid shell', async () => {
-  const h=harness(async url=>new URL(url).pathname==='/api/session'?Response.json({licensed:true}):new Response('marketing or sign-in'));
+test('finite app assets also cache with valid MIME when a deployment omits the optional app marker', async () => {
+  const h=harness(async url=>appAsset(new URL(url).pathname,{marker:false}));
   await h.prepare();
-  assert.equal(h.messages.some(item=>item.type==='PERAGYM_OFFLINE_READY'),false);
-  for(const data of h.cacheData.values())assert.equal(data.size,0);
+  assert.equal(h.messages.at(-1).type,'PERAGYM_OFFLINE_READY');
 });
 
-test('online auth failure clears shell cache, not the user database', async () => {
-  let revoked=false;
-  const h=harness(async url=>{
-    if(new URL(url).pathname==='/api/session')return Response.json({licensed:true});
-    return revoked?new Response('purchase required',{status:403}):authorizedAsset('paid');
-  });
+test('wrong MIME and redirected pages never become a complete application shell', async () => {
+  const h=harness(async()=>new Response('an HTML error cannot be used as a JavaScript file',{headers:{'Content-Type':'text/html'}}));
   await h.prepare();
-  assert([...h.cacheData.keys()].some(name=>name.endsWith('-app')));
-  revoked=true;
-  assert.equal((await h.fetch('/app/','navigate')).status,403);
-  assert.equal([...h.cacheData.keys()].filter(name=>name.endsWith('-app')).length,0);
-  assert.equal(h.messages.at(-1).type,'PERAGYM_LICENSE_REQUIRED');
+  assert.equal(h.messages.some(item=>item.type==='PERAGYM_OFFLINE_READY'),false);
+  assert.equal(h.cacheData.size,0);
+  const redirected=harness(async url=>{
+    const response=appAsset(new URL(url).pathname);
+    Object.defineProperty(response,'redirected',{value:true});
+    return response;
+  });
+  await redirected.prepare();assert.equal(redirected.cacheData.size,0);
+});
+
+test('migration preserves an older working offline shell until the complete free replacement is available', async () => {
+  let online=false;
+  const h=harness(async url=>{
+    if(!online)throw new Error('temporarily offline');
+    return appAsset(new URL(url).pathname);
+  });
+  await seedOldShell(h);await h.prepare();
+  assert(h.cacheData.has('peragym-2.0.0-app'));
+  assert.equal(await (await h.fetch('/app/','navigate')).text(),'/app/index.html');
+  online=true;await h.prepare();
+  assert(h.cacheData.has('peragym-2.1.0-app'));assert.equal(h.cacheData.has('peragym-2.0.0-app'),false);
+  assert.equal(h.messages.at(-1).type,'PERAGYM_OFFLINE_READY');
+});
+
+test('transient asset failures preserve the offline app and never touch the local database', async () => {
+  let failed=false;
+  const h=harness(async url=>failed?new Response('temporarily unavailable',{status:503}):appAsset(new URL(url).pathname));
+  await h.prepare();failed=true;await h.prepare();
+  assert.equal((await h.fetch('/app/','navigate')).status,200);
+  assert(h.cacheData.has('peragym-2.1.0-app'));
   assert.equal(workerSource.includes('indexedDB.deleteDatabase'),false);
 });
 
-test('session 401 also removes an existing offline shell', async () => {
-  let revoked=false;
-  const h=harness(async url=>{
-    if(new URL(url).pathname==='/api/session')return revoked?new Response('',{status:401}):Response.json({licensed:true});
-    return authorizedAsset('paid');
-  });
-  await h.prepare();revoked=true;await h.prepare();
-  assert.equal([...h.cacheData.keys()].filter(name=>name.endsWith('-app')).length,0);
+test('donation APIs, session failures, admin, sign-in and unknown URLs are never intercepted or cached', async () => {
+  const h=harness(async url=>appAsset(new URL(url).pathname));
+  await h.prepare();const names=[...h.cacheData.keys()];
+  for(const path of ['/api/donation','/api/session','/api/orders','/admin','/admin/orders','/signin-with-chatgpt','/callback','/app/unknown.js','https://external.example/app/'])assert.equal(await h.fetch(path),undefined);
+  assert.equal(await h.fetch('/app/app.js','same-origin','POST'),undefined);
+  assert.deepEqual([...h.cacheData.keys()],names);
 });
 
-test('payment APIs, administration and sign-in are never intercepted or cached', async () => {
-  const h=harness(async()=>{throw new Error('unexpected worker fetch');});
-  for(const path of ['/api/orders','/api/session','/admin','/admin/orders','/signin-with-chatgpt','/callback'])assert.equal(await h.fetch(path),undefined);
-  assert.equal(await h.fetch('/app/app.js','same-origin','POST'),undefined);
-  assert.equal(h.cacheData.size,0);
+test('installation guidance is independent of orders and explains local storage on iOS', async () => {
+  const script=await readFile(new URL('../web/pwa.js',import.meta.url),'utf8');
+  assert.equal(script.includes('PERAGYM_LICENSE_REQUIRED'),false);
+  assert.equal(script.includes('arquivo de acesso do seu pedido'),false);
+  assert(script.includes('Safari e o aplicativo podem manter bancos locais separados'));
 });

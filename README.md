@@ -1,29 +1,25 @@
-# PeraGym
+# PeraGym — aplicativo gratuito
 
-Aplicativo em **HTML, CSS e JavaScript**, instalável como **PWA no Android e no iOS**, com banco IndexedDB local e gráficos de evolução de cargas e de peso corporal.
+**[Abrir o PeraGym e instalar grátis](https://peragym-treino.perabru.chatgpt.site/)**
 
-**[Abrir página promocional e PeraGym](https://peragym-treino.perabru.chatgpt.site/)**
+Aplicativo em HTML, CSS e JavaScript, instalável como PWA no Android e no iOS, com banco IndexedDB local, fichas de treino e gráficos de evolução de cargas e peso corporal.
 
-A implementação atual está em [pwa/](pwa/). A página promocional é [pwa/web/index.html](pwa/web/index.html), e o aplicativo fica em [pwa/web/app/](pwa/web/app/).
+## Doação opcional
 
-Inclui fichas/exercícios editáveis, cargas decimais em kg, loading, tema claro/escuro, cronômetros, histórico, gráficos SVG e backup local.
+Antes de instalar, a página oferece um QR Code e Pix Copia e Cola para uma **doação sugerida de R$ 1,99** à chave `bruno.pera@unifesp.br`.
 
-## Compra com Pix
+O botão **Continuar sem doar e instalar** fica sempre disponível. O aplicativo é gratuito, sem cadastro, login, compra, comprovante ou confirmação de pagamento. A doação não condiciona o acesso ao aplicativo. `/app/` e `/download` são públicos.
 
-A chave é `bruno.pera@unifesp.br`. Os arquivos do PWA são protegidos pelo servidor e liberados após confirmação manual do recebimento no banco. O responsável define o preço e confere os pedidos na área administrativa do site, acessada com sua conta ChatGPT. A chave Pix sozinha não confirma pagamentos automaticamente.
+## Instalar
 
-**As vendas começam pausadas até que o preço seja definido no painel.** Há QR Code, Pix Copia e Cola, token privado de recuperação e bloqueio de download antes da aprovação.
+- **Android:** Chrome → Instalar aplicativo.
+- **iPhone:** Safari → Compartilhar → Adicionar à Tela de Início.
 
-## Instalação
+A instalação precisa ser confirmada no próprio aparelho. Abra o app uma vez com internet para preparar o uso offline. Os registros ficam no aparelho; use o backup local antes de trocar de navegador, aparelho ou apagar os dados do site.
 
-Após liberar o acesso, abra o aplicativo no celular:
+## Código
 
-- Android/Chrome: **Instalar aplicativo**.
-- iOS/Safari: **Compartilhar → Adicionar à Tela de Início**.
-
-A instalação é confirmada no próprio aparelho. Treinos e peso não sincronizam entre dispositivos; use o backup local ao trocar de navegador/aparelho.
-
-## Código e testes
+A implementação atual está em [pwa/](pwa/). A página promocional é [pwa/web/index.html](pwa/web/index.html), e o app está em [pwa/web/app/](pwa/web/app/).
 
 ```sh
 cd pwa
@@ -33,6 +29,6 @@ npm run build
 npm run validate
 ```
 
-Os 26 testes cobrem IndexedDB, backup, gráficos, uso offline e controle de pagamento. A implementação hospedada usa Worker/D1 para os pedidos e a identidade Sites para administrar. Hospedagem puramente estática não verifica recebimentos nem protege os downloads. Consulte [pwa/README.md](pwa/README.md).
+Os **32 testes** cobrem acesso gratuito, Pix opcional de R$ 1,99, migração do cache offline, IndexedDB, gráficos e backup. O fluxo de compras foi desativado; as antigas tabelas foram preservadas sem alteração. O app gratuito funciona sem o banco remoto ou cookies de licença.
 
-O código Android original é mantido como versão anterior. O APK foi retirado da distribuição principal deste repositório; arquivos e links publicados em commits anteriores continuam no histórico Git. O controle de acesso se aplica à nova versão PWA.
+Consulte [pwa/README.md](pwa/README.md). O código Android anterior permanece no repositório e no histórico como versão anterior.

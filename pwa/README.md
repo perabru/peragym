@@ -1,54 +1,39 @@
-# PeraGym PWA
+# PeraGym PWA — gratuito
 
-Aplicativo em **HTML, CSS e JavaScript** para Android, iPhone e navegador. Fichas, exercícios, cargas e peso corporal ficam no **IndexedDB do próprio aparelho**. A versão web substitui o APK na distribuição principal.
+**[Abrir PeraGym](https://peragym-treino.perabru.chatgpt.site/)**
 
-## Páginas
+Aplicativo em HTML, CSS e JavaScript, instalável no Android e no iPhone. Fichas, exercícios, cargas, histórico e peso corporal ficam no IndexedDB do próprio aparelho.
 
-- `/`: página promocional (`web/index.html`), com o visual coral, amarelo e vinho do PeraGym.
-- `/app/`: aplicativo, acessível após a liberação da compra; o responsável também pode abri-lo pela sua conta.
-- `/admin/`: administração exclusiva do responsável.
-- `/download`: abre a instalação do aplicativo após validar o acesso no servidor.
+## Baixar e instalar gratuitamente
 
-## Aplicativo
+Toque em **Baixar grátis** na página promocional. Antes da instalação, aparece um convite para apoiar o projeto com um **Pix opcional de R$ 1,99** para `bruno.pera@unifesp.br`, com QR Code e Pix Copia e Cola.
 
-Criar, editar e excluir fichas e exercícios; cargas em quilos com casas decimais; séries, repetições, descanso e observações; loading animado; tema claro/escuro; cronômetro e histórico; gráficos de cargas por exercício e registros de peso corporal; tabelas com os pontos dos gráficos; filtros por período; backup JSON local com importação validada e atômica.
+Você pode escolher **Continuar sem doar e instalar**. A doação nunca condiciona o acesso: não há compra, cadastro, login, comprovante, licença ou conferência bancária para usar o app. O acesso direto a `/app/` e `/download` também é gratuito.
 
-O aplicativo começa vazio. As imagens e os números na página promocional estão identificados como exemplos ilustrativos. Nenhum gráfico do aplicativo inventa medições.
+- **Android:** abra no Chrome e use **Instalar aplicativo**, ou a opção equivalente no menu.
+- **iPhone/iPad:** abra no Safari e use **Compartilhar → Adicionar à Tela de Início → Adicionar**.
 
-## Pix e liberação
+A instalação é confirmada no próprio celular. Abra o app com internet uma vez para preparar o uso offline. No iOS, o armazenamento do app instalado pode ser separado do navegador; comece seus registros pelo ícone instalado e use o backup antes de trocar de dispositivo ou apagar os dados do site.
 
-A chave configurada é `bruno.pera@unifesp.br`. Cada pedido recebe valor fixado no servidor, identificador, código Pix Copia e Cola e QR Code.
+## Recursos
 
-**A confirmação é manual.** A chave Pix, sozinha, não informa ao sistema se o dinheiro chegou. O responsável confere o recebimento no extrato bancário, entra em `/admin/`, registra a referência da transação e libera o pedido. A referência não pode ser usada para aprovar dois pedidos. Comprovantes enviados ou um botão “já paguei” não liberam o aplicativo.
+- Criar, editar e excluir fichas e exercícios.
+- Ajustar cargas em kg, incluindo valores decimais.
+- Séries, repetições, descanso e observações.
+- Loading animado e tema claro/escuro.
+- Cronômetro, descanso e histórico dos treinos.
+- Gráficos de evolução das cargas por exercício e do peso corporal, com tabelas e filtros.
+- Backup JSON local com importação validada e atômica.
 
-As vendas começam pausadas, pois o preço não foi informado. Para ativar:
+O app começa vazio. As prévias da página promocional são identificadas como ilustrações. Não há sincronização automática entre aparelhos nem envio dos registros de treino ou peso ao servidor.
 
-1. Entre em `/admin/` com a conta ChatGPT do responsável.
-2. Defina o preço único e marque a abertura das vendas.
-3. Confira cada Pix no banco antes de aprovar o pedido.
+## Implementação
 
-O cliente guarda seu **arquivo de acesso do pedido**, que contém uma chave privada de recuperação. Depois da confirmação, o servidor emite um cookie `HttpOnly`, `Secure` e `SameSite=Lax`. Sem compra confirmada, os arquivos do aplicativo são bloqueados no servidor, mesmo que alguém altere flags no navegador. Tokens são armazenados como hashes. Pedidos e dados administrativos nunca entram no cache offline.
+`web/index.html` é a página promocional. `web/app/` contém o aplicativo e o IndexedDB. `web/sw.js` prepara o cache offline gratuito. `server/worker.js` serve os arquivos públicos e gera o QR Code Pix fixo de R$ 1,99.
 
-O preço enviado pelo cliente é ignorado. O código não processa cartões nem utiliza a conta Stripe de outro projeto. Para automatizar a confirmação no futuro, será necessária uma API do banco/provedor com consulta de transações e webhook autenticado. Não há uma simulação de confirmação automática nesta versão.
+O QR usa o formato BR Code e CRC do Pix. Ele apresenta uma doação sugerida e não cria um pedido nem confirma uma transferência. Uma falha ao gerar o QR não impede abrir o aplicativo.
 
-O código-fonte publicado no GitHub pode ser estudado e copiado; a proteção controla a distribuição no serviço hospedado. A versão Android disponibilizada anteriormente continua no histórico Git, e seus links antigos não podem ser recolhidos por este controle de acesso do PWA.
-
-## Instalar
-
-Após liberar o acesso, abra `/app/` com internet e aguarde a indicação de que o uso offline está pronto.
-
-- **Android:** abra no Chrome e use **Instalar aplicativo** ou a opção correspondente no menu.
-- **iPhone/iPad:** abra no Safari, toque em **Compartilhar → Adicionar à Tela de Início → Adicionar**.
-
-A instalação precisa ser confirmada no aparelho. O site não instala um aplicativo silenciosamente nem depende da Play Store/App Store.
-
-No iOS, o aplicativo instalado pode usar um armazenamento separado do navegador. Guarde o arquivo de acesso do pedido para restaurar a compra caso seja solicitado, e comece a registrar seus treinos dentro do app instalado. Os registros não sincronizam entre aparelhos. Use o backup antes de trocar de dispositivo, navegador ou apagar os dados do site.
-
-## Dados e servidor
-
-Os dados pessoais de treino e peso permanecem no IndexedDB. O servidor armazena apenas a configuração de venda, pedidos, contato do comprador, confirmação e licenças em D1. Não há publicidade ou rastreadores.
-
-A autenticação administrativa usa a identidade fornecida pela plataforma Sites. `ADMIN_EMAIL` fica na configuração privada do serviço e permite vincular, uma única vez, o identificador estável da conta do responsável. O site público não recebe essa configuração no JavaScript do cliente.
+O fluxo de compras anterior foi desativado e os antigos endpoints de pedidos retornam HTTP 410. As tabelas históricas foram preservadas sem leitura, alteração ou exclusão. A versão gratuita não depende desse banco remoto, de cookies de acesso nem de autenticação.
 
 ## Desenvolvimento
 
@@ -62,25 +47,10 @@ npm run validate
 npm run dev
 ```
 
-A prévia local aplica as migrações em `.sites-runtime/preview.sqlite`, separado da produção. Ela não simula login de administrador. Testes usam bancos isolados e não criam vendas reais.
+Os testes usam bancos locais isolados e não fazem pagamentos reais. `scripts/embed-assets.mjs` incorpora os arquivos em um Worker ESM. A hospedagem usa HTTPS para permitir a instalação do PWA e o service worker. Os arquivos de `web/app/` também são fontes HTML/CSS/JS comuns, sem dependências externas no navegador.
 
-Estrutura:
+Os arquivos de migração em `drizzle/` são históricos e permanecem imutáveis. O build exclui testes dos recursos servidos ao visitante.
 
-```text
-web/index.html          Página promocional
-web/app/                Aplicativo e banco local
-web/admin/              Administração
-web/sw.js               Cache offline protegido
-server/worker.js        Pedidos, Pix e controle de acesso
-db/schema.ts            Esquema de compras
-drizzle/                Migrações geradas e metadados
-scripts/embed-assets.mjs  Incorpora os arquivos no Worker
-```
+## Referências visuais
 
-O build incorpora os arquivos do app dentro do Worker, em vez de publicá-los como arquivos estáticos sem autenticação. O projeto precisa de HTTPS e de um backend com D1 e autenticação Sites; apenas hospedagem estática como GitHub Pages não executa a verificação de pagamentos.
-
-Para mudar o esquema, altere `db/schema.ts`, execute `npm run db:generate`, revise e preserve as migrações aplicadas. O fluxo Sites aplica as migrações hospedadas antes de publicar.
-
-## Referências
-
-Identidade visual adaptada dos cards e exemplos enviados pelo usuário (KSAplay, Voxybuns, JkHuger e milley69/Uiverse). QR Code gerado com `qrcode-generator`. Formato Pix e CRC implementados conforme o manual de padrões do Banco Central.
+Identidade adaptada dos cards e exemplos enviados pelo usuário (KSAplay, Voxybuns, JkHuger e milley69/Uiverse). QR Code gerado com `qrcode-generator`.

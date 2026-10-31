@@ -43,13 +43,13 @@
     const steps = ios ? ['Abra o menu Compartilhar do Safari (quadrado com uma seta para cima).','Toque em “Adicionar à Tela de Início”. Se necessário, role a lista de ações.','Confirme o nome PeraGym e toque em “Adicionar”.'] : android ? ['Abra o menu ⋮ do Chrome neste endereço.','Toque em “Instalar aplicativo” ou “Adicionar à tela inicial”.','Confirme em “Instalar” e abra pelo ícone PeraGym.'] : ['Abra este endereço no Chrome ou Edge.','Use o ícone de instalação na barra de endereço ou o menu do navegador.','Confirme a instalação e abra o PeraGym pelo novo ícone.'];
     steps.forEach(text => {const item=document.createElement('li');item.textContent=text;list.append(item);});
     const note = document.createElement('p');note.className='pwa-guide-note';note.setAttribute('role','status');note.textContent='Na primeira abertura, mantenha a internet conectada para preparar o uso offline. Seus treinos e medidas ficam neste aparelho.';
-    const recovery = document.createElement('p');recovery.className='pwa-guide-note';recovery.textContent=ios ? 'Guarde o arquivo de acesso do seu pedido. No iPhone, o aplicativo instalado pode solicitar a recuperação da compra. Comece seus registros pelo ícone instalado e faça um backup antes de trocar de navegador ou aparelho.' : 'Guarde o arquivo de acesso do seu pedido e faça um backup local antes de trocar de navegador ou aparelho.';
+    const storageNote = document.createElement('p');storageNote.className='pwa-guide-note';storageNote.textContent=ios ? 'No iPhone, comece seus registros pelo ícone instalado: o Safari e o aplicativo podem manter bancos locais separados. Faça um backup antes de trocar de navegador ou aparelho.' : 'Faça um backup local antes de trocar de navegador ou aparelho. O PeraGym é gratuito e não exige pagamento para instalar ou usar.';
     const actions=document.createElement('div');actions.className='pwa-guide-actions';
     if (iosOtherBrowser) {
       const copy=document.createElement('button');copy.type='button';copy.className='pwa-guide-secondary';copy.textContent='Copiar endereço';copy.addEventListener('click', async()=>{try{await navigator.clipboard.writeText(new URL('/app/',location.origin).href);note.textContent='Endereço copiado. Abra o Safari e cole na barra de endereço.';}catch(_){note.textContent=`Abra o Safari e acesse ${new URL('/app/',location.origin).href}`;}});actions.append(copy);
     }
     const close=document.createElement('button');close.type='button';close.className='pwa-guide-primary';close.textContent='Entendi';close.addEventListener('click',()=>guide.close());actions.append(close);
-    guide.append(title,intro,list,note,recovery,actions);guide.addEventListener('close',()=>{guide?.remove();guide=undefined;});document.body.append(guide);guide.showModal();
+    guide.append(title,intro,list,note,storageNote,actions);guide.addEventListener('close',()=>{guide?.remove();guide=undefined;});document.body.append(guide);guide.showModal();
   }
 
   async function install() {
@@ -102,7 +102,6 @@
           document.querySelectorAll('[data-offline-status]').forEach(item=>{item.textContent='Pronto para usar offline';});
           window.dispatchEvent(new CustomEvent('peragym:offline-ready'));
         }
-        if(event.data?.type==='PERAGYM_LICENSE_REQUIRED'&&inApp&&navigator.onLine){announce('Conecte seu acesso de compra para continuar. Seus dados locais foram mantidos.');window.dispatchEvent(new CustomEvent('peragym:license-required'));}
       });
     } catch (_) {
       // The online app still works; install instructions remain available.
