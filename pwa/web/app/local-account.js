@@ -85,6 +85,18 @@ function validateVault(vault,profileId) {
   decode(vault.iv,12,12);decode(vault.ciphertext,17,MAX_DATA_BYTES+16);
   return vault;
 }
+async function rememberedPurpose(profile) {
+  validateMetadata(profile);
+  const envelope=profile.passwordEnvelope;
+  if(!envelope||envelope.version!==VERSION||envelope.profileId!==profile.id||envelope.purpose!=='password-key')throw failure('As credenciais deste perfil não são compatíveis com a entrada automática.','LocalAccountDataError');
+  decode(envelope.iv,12,12);decode(envelope.ciphertext,48,48);
+  // Canonical fields avoid object-property ordering and authenticate the credential version via AAD.
+  const bytes=encoder.encode(JSON.stringify(['PeraGym','remembered-device',VERSION,profile.id,profile.username,
+    profile.kdf.name,profile.kdf.hash,profile.kdf.iterations,profile.kdf.salt,
+    envelope.version,envelope.profileId,envelope.purpose,envelope.iv,envelope.ciphertext]));
+  try{return `remembered-device:${encode(new Uint8Array(await cryptoAPI().subtle.digest('SHA-256',bytes)))}`;}
+  finally{bytes.fill(0);}
+}
 async function derivePasswordKey(password,kdf) {
   const api=cryptoAPI(),bytes=encoder.encode(password);
   try{
@@ -281,12 +293,48 @@ export function createLocalAccount({onChange}={}) {
       }catch(error){fail(error);}
     });
   }
-  async function getRecoveryStatus() {
-    const current=requireSession();if(current.guest)return {enabled:false};
+  async function getRecoveryStatus(options={}) {
+    const current=requireSession();
+    if(!plainObject(options)||(options.includeGeneration!==undefined&&typeof options.includeGeneration!=='boolean'))throw failure('As opções de recuperação são inválidas.');
+    const result=(enabled,recoveryGeneration=0)=>({enabled,...(options.includeGeneration?{generation:recoveryGeneration}:{})});
+    if(current.guest)return result(false);
     const records=await recordsFor(current.profile.id);assertGeneration(current.run);
     const profile=validateMetadata(records.profile);
-    if(profile.recovery===undefined)return {enabled:false};
-    validateRecovery(profile);return {enabled:true};
+    if(profile.recovery===undefined)return result(false);
+    const recovery=validateRecovery(profile);return result(true,recovery.generation);
+  }
+  async function verifyRecoveryCode(code) {
+    const current=requireSession();
+    if(current.guest)throw failure('Crie um perfil com senha para verificar um código de recuperação.','LocalAccountAuthError');
+    normalizeRecoveryCode(code);
+    const records=await recordsFor(current.profile.id);assertGeneration(current.run);
+    const profile=validateMetadata(records.profile);
+    if(profile.recovery===undefined)throw failure('Este perfil ainda não tem um código de recuperação ativado.','LocalAccountAuthError');
+    const recovery=validateRecovery(profile);let key;
+    try{
+      const wrappingKey=await deriveRecoveryKey(profile,code,recovery);assertGeneration(current.run);
+      key=await unwrapDataKey(profile,wrappingKey,recovery.envelope,'recovery-key');
+    }catch{assertGeneration(current.run);throw failure('O código de recuperação não corresponde ao código atual deste perfil.','LocalAccountAuthError');}
+    assertGeneration(current.run);await decryptData(profile.id,key,records.vault);assertGeneration(current.run);
+    const latest=await profileByUsername(profile.username);assertGeneration(current.run);
+    if(JSON.stringify(latest)!==JSON.stringify(profile))throw failure('O código ou o acesso deste perfil mudou durante a verificação. Use o código atual.','LocalAccountConflict');
+    return {profileId:profile.id,generation:recovery.generation};
+  }
+  async function verifyPassword(password) {
+    const current=requireSession();
+    if(current.guest)throw failure('O uso sem cadastro não tem senha local. Entre em um perfil protegido.','LocalAccountAuthError');
+    password=checkPassword(password);
+    const records=await recordsFor(current.profile.id);assertGeneration(current.run);
+    const profile=validateMetadata(records.profile);let key;
+    try{
+      let wrappingKey;
+      try{wrappingKey=await derivePasswordKey(password,profile.kdf);}finally{password=null;}
+      assertGeneration(current.run);key=await unwrapDataKey(profile,wrappingKey,profile.passwordEnvelope,'password-key');
+    }catch{assertGeneration(current.run);throw failure('Senha local incorreta. Seu perfil continua aberto e nenhum dado foi alterado.','LocalAccountAuthError');}
+    assertGeneration(current.run);await decryptData(profile.id,key,records.vault);assertGeneration(current.run);
+    const latest=await profileByUsername(profile.username);assertGeneration(current.run);
+    if(JSON.stringify(latest)!==JSON.stringify(profile))throw failure('O acesso deste perfil mudou durante a confirmação. Use a senha atual.','LocalAccountConflict');
+    return {profileId:profile.id};
   }
   async function createRecoveryCode() {
     const current=requireSession();
@@ -423,6 +471,32 @@ export function createLocalAccount({onChange}={}) {
     const envelope=await wrapDataKey(current.profile,current.key,wrappingKey,'biometric-prf');
     assertGeneration(current.run);return envelope;
   }
+  async function wrapRememberedSessionKey(wrappingKey) {
+    const current=requireSession();
+    if(current.guest)throw failure('O uso sem cadastro não tem entrada automática protegida. Entre em um perfil com senha.','LocalAccountAuthError');
+    const records=await recordsFor(current.profile.id);assertGeneration(current.run);
+    const profile=validateMetadata(records.profile),purpose=await rememberedPurpose(profile);assertGeneration(current.run);
+    await decryptData(profile.id,current.key,records.vault);assertGeneration(current.run);
+    const envelope=await wrapDataKey(profile,current.key,wrappingKey,purpose);assertGeneration(current.run);
+    const latest=await profileByUsername(profile.username);assertGeneration(current.run);
+    if(JSON.stringify(latest)!==JSON.stringify(profile))throw failure('O acesso deste perfil foi alterado em outra aba. Tente ativar a entrada automática novamente.','LocalAccountConflict');
+    return envelope;
+  }
+  async function unlockWithRememberedKey(profileId,wrappingKey,envelope) {
+    cryptoAPI();
+    if(typeof profileId!=='string'||!PROFILE_ID.test(profileId))throw failure('Escolha um perfil local válido.');
+    if(profileId===GUEST_ID)throw failure('Use a opção sem cadastro para abrir os dados de visitante.','LocalAccountAuthError');
+    if(session)throw failure('Já existe um perfil aberto. A entrada automática não pode substituir a sessão atual.');
+    const run=beginAuthentication(),records=await recordsFor(profileId);assertGeneration(run);
+    if(!records.profile)throw failure('Este perfil local não foi encontrado neste aparelho.','LocalAccountAuthError');
+    const profile=validateMetadata(records.profile),purpose=await rememberedPurpose(profile);assertGeneration(run);let key;
+    try{key=await unwrapDataKey(profile,wrappingKey,envelope,purpose);}
+    catch{assertGeneration(run);throw failure('A entrada automática deste aparelho não é mais válida. Entre com sua senha local.','LocalAccountAuthError');}
+    assertGeneration(run);await decryptData(profileId,key,records.vault);assertGeneration(run);
+    const latest=await profileByUsername(profile.username);assertGeneration(run);
+    if(JSON.stringify(latest)!==JSON.stringify(profile))throw failure('A senha ou o acesso deste perfil foi alterado em outra aba. Entre novamente.','LocalAccountConflict');
+    return activate(run,profile,key,records.vault.revision);
+  }
   async function unlockWithWrappedKey(profileId,wrappingKey,envelope) {
     cryptoAPI();if(typeof profileId!=='string'||!PROFILE_ID.test(profileId))throw failure('Escolha um perfil local válido.');
     if(profileId===GUEST_ID)throw failure('Use a opção sem cadastro para abrir os dados de visitante.','LocalAccountAuthError');
@@ -434,7 +508,7 @@ export function createLocalAccount({onChange}={}) {
     assertGeneration(run);await decryptData(profileId,key,records.vault);assertGeneration(run);
     return activate(run,profile,key,records.vault.revision);
   }
-  return {register,login,enterGuest,listProfiles,getState,subscribe,lock,readData,mutateData,wrapSessionKey,unlockWithWrappedKey,getRecoveryStatus,createRecoveryCode,recoverPassword};
+  return {register,login,enterGuest,listProfiles,getState,subscribe,lock,readData,mutateData,wrapSessionKey,unlockWithWrappedKey,wrapRememberedSessionKey,unlockWithRememberedKey,getRecoveryStatus,verifyRecoveryCode,verifyPassword,createRecoveryCode,recoverPassword};
 }
 
 export const localAccount=createLocalAccount();

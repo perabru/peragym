@@ -485,3 +485,188 @@ for(const phase of ['deriveKey','decrypt'])test(`a reset committed during login 
  assert.equal(login.getState().unlocked,false);assert.deepEqual(await dump(),committed);
  await login.login('bruno',SECOND_PASSWORD);assert.equal(login.getState().unlocked,true);assert.deepEqual((await dump()).vaults,committed.vaults);
 });
+
+const rememberedPattern=/^remembered-device:[A-Za-z0-9_-]{43}$/;
+test('remembered session wrappers restore a locked new instance without exposing keys or changing profile storage',async t=>{
+ const account=setup(t),profile=await register(account),key=await wrappingKey();
+ await account.mutateData(data=>{data.workouts.push({id:'remembered-data',name:'Private remembered workout'});});
+ const before=await dump(),data=await account.readData(),envelope=await account.wrapRememberedSessionKey(key);
+ assert.match(envelope.purpose,rememberedPattern);assert.equal(envelope.profileId,profile.id);assert.equal(envelope.version,1);
+ assert.deepEqual(Object.keys(envelope).sort(),['ciphertext','iv','profileId','purpose','version']);
+ assert.equal(Buffer.from(envelope.ciphertext,'base64url').byteLength,48);assert.equal(Buffer.from(envelope.iv,'base64url').byteLength,12);
+ for(const secret of [PASSWORD,'Private remembered workout'])assert.equal(JSON.stringify(envelope).includes(secret),false);
+ assert.deepEqual(await dump(),before);account.lock();
+ const fresh=createLocalAccount();assert.equal(fresh.getState().unlocked,false);
+ assert.deepEqual(await fresh.unlockWithRememberedKey(profile.id,key,envelope),profile);assert.deepEqual(await fresh.readData(),data);assert.deepEqual(await dump(),before);
+ const generation=fresh.getState().generation;await assert.rejects(()=>fresh.unlockWithRememberedKey(profile.id,key,envelope));assert.equal(fresh.getState().generation,generation);assert.equal(fresh.getState().unlocked,true);
+});
+
+test('remembered wrappers reject corrupted ciphertext, wrong wrapping keys and cross-purpose biometric use',async t=>{
+ const account=setup(t),profile=await register(account),key=await wrappingKey(),wrongKey=await wrappingKey();
+ const remembered=await account.wrapRememberedSessionKey(key),biometric=await account.wrapSessionKey(key),before=await dump();account.lock();
+ for(const [usedKey,envelope] of [[key,{...remembered,ciphertext:bitflip(remembered.ciphertext)}],[key,{...remembered,iv:bitflip(remembered.iv)}],
+  [wrongKey,remembered],[key,biometric],[key,{...remembered,purpose:'biometric-prf'}],[key,{...remembered,profileId:'missing-profile'}]]){
+  await assert.rejects(()=>account.unlockWithRememberedKey(profile.id,usedKey,envelope),error=>error.name==='LocalAccountAuthError');
+  assert.equal(account.getState().unlocked,false);assert.deepEqual(await dump(),before);
+ }
+ await assert.rejects(()=>account.unlockWithWrappedKey(profile.id,key,remembered),error=>error.name==='LocalAccountAuthError');assert.deepEqual(await dump(),before);
+ await account.unlockWithRememberedKey(profile.id,key,remembered);assert.equal(account.getState().profileId,profile.id);
+});
+
+test('a password reset revokes old remembered wrappers cryptographically while preserving biometric wrappers and vault bytes',async t=>{
+ const account=setup(t),profile=await register(account),key=await wrappingKey();
+ await account.mutateData(data=>{data.workouts.push({id:'same-data-key',name:'Preserved private data'});});
+ const code=await account.createRecoveryCode(),oldRemembered=await account.wrapRememberedSessionKey(key),biometric=await account.wrapSessionKey(key),before=await dump();account.lock();
+ await account.recoverPassword({username:'bruno',recoveryCode:code,newPassword:SECOND_PASSWORD});
+ const currentRemembered=await account.wrapRememberedSessionKey(key);assert.notEqual(currentRemembered.purpose,oldRemembered.purpose);
+ const committed=await dump();assert.deepEqual(committed.vaults,before.vaults);account.lock();
+ await assert.rejects(()=>account.unlockWithRememberedKey(profile.id,key,oldRemembered),error=>error.name==='LocalAccountAuthError');
+ // Editing the public purpose to the new fingerprint still fails because the old ciphertext authenticates the old AAD.
+ await assert.rejects(()=>account.unlockWithRememberedKey(profile.id,key,{...oldRemembered,purpose:currentRemembered.purpose}),error=>error.name==='LocalAccountAuthError');
+ assert.deepEqual(await dump(),committed);assert.equal(account.getState().unlocked,false);
+ await account.unlockWithWrappedKey(profile.id,key,biometric);assert.equal((await account.readData()).workouts[0].id,'same-data-key');account.lock();
+ await account.unlockWithRememberedKey(profile.id,key,currentRemembered);assert.equal((await account.readData()).workouts[0].id,'same-data-key');assert.deepEqual(await dump(),committed);
+});
+
+test('recovery status exposes its current generation only on request and code-only rotation preserves remembered credential binding',async t=>{
+ const account=setup(t);await register(account);assert.deepEqual(await account.getRecoveryStatus(),{enabled:false});assert.deepEqual(await account.getRecoveryStatus({includeGeneration:true}),{enabled:false,generation:0});
+ await account.createRecoveryCode();assert.deepEqual(await account.getRecoveryStatus(),{enabled:true});assert.deepEqual(await account.getRecoveryStatus({includeGeneration:true}),{enabled:true,generation:1});
+ const key=await wrappingKey(),first=await account.wrapRememberedSessionKey(key),other=createLocalAccount();await other.login('bruno',PASSWORD);await other.createRecoveryCode();
+ assert.deepEqual(await account.getRecoveryStatus({includeGeneration:true}),{enabled:true,generation:2});assert.deepEqual(await account.getRecoveryStatus({includeGeneration:false}),{enabled:true});
+ const second=await account.wrapRememberedSessionKey(key);assert.equal(second.purpose,first.purpose);account.lock();await account.unlockWithRememberedKey(first.profileId,key,first);
+ for(const options of [null,[],{includeGeneration:'yes'}])await assert.rejects(()=>account.getRecoveryStatus(options));
+ account.lock();await account.enterGuest();assert.deepEqual(await account.getRecoveryStatus({includeGeneration:true}),{enabled:false,generation:0});assert.deepEqual(await account.getRecoveryStatus(),{enabled:false});
+});
+
+test('remembered access cannot wrap a guest or substitute a different open profile',async t=>{
+ const account=setup(t),key=await wrappingKey();await account.enterGuest();await account.mutateData(data=>{data.workouts.push({id:'guest-safe'});});const guest=await dumpGuest();
+ await assert.rejects(()=>account.wrapRememberedSessionKey(key),error=>error.name==='LocalAccountAuthError');account.lock();
+ await assert.rejects(()=>account.unlockWithRememberedKey('guest-local',key,{}),error=>error.name==='LocalAccountAuthError');assert.deepEqual(await dumpGuest(),guest);
+ const a=await register(account,'alice'),rememberedA=await account.wrapRememberedSessionKey(key),b=await register(account,'bruno'),rememberedB=await account.wrapRememberedSessionKey(key),before=await dump();
+ const generation=account.getState().generation;
+ await assert.rejects(()=>account.unlockWithRememberedKey(a.id,key,rememberedA));assert.equal(account.getState().profileId,b.id);assert.equal(account.getState().generation,generation);account.lock();
+ await assert.rejects(()=>account.unlockWithRememberedKey(b.id,key,{...rememberedA,profileId:b.id,purpose:rememberedB.purpose}),error=>error.name==='LocalAccountAuthError');
+ assert.deepEqual(await dump(),before);assert.deepEqual(await dumpGuest(),guest);assert.equal(account.getState().unlocked,false);
+});
+
+test('locking cancels remembered wrapping and restore while cryptography is pending',async t=>{
+ const account=setup(t),profile=await register(account),key=await wrappingKey(),envelope=await account.wrapRememberedSessionKey(key),before=await dump();
+ let entered=deferred(),release=deferred();const subtle=webcrypto.subtle,wrap=subtle.wrapKey.bind(subtle);
+ let restore=patchMethod(t,subtle,'wrapKey',async(...args)=>{entered.resolve();await release.promise;return wrap(...args);});
+ let pending=account.wrapRememberedSessionKey(key),rejected=assert.rejects(pending,error=>error.name==='LocalAccountCancelled');await entered.promise;
+ account.lock();release.resolve();await rejected;restore();assert.deepEqual(await dump(),before);
+ entered=deferred();release=deferred();const decrypt=subtle.decrypt.bind(subtle);
+ restore=patchMethod(t,subtle,'decrypt',async(...args)=>{entered.resolve();await release.promise;return decrypt(...args);});
+ pending=account.unlockWithRememberedKey(profile.id,key,envelope);rejected=assert.rejects(pending,error=>error.name==='LocalAccountCancelled');await entered.promise;
+ account.lock();release.resolve();await rejected;restore();assert.deepEqual(await dump(),before);assert.equal(account.getState().unlocked,false);
+});
+
+test('metadata changed during remembered wrapping prevents returning a stale wrapper',async t=>{
+ const account=setup(t);await register(account);const key=await wrappingKey(),code=await account.createRecoveryCode(),before=await dump(),reset=createLocalAccount();
+ const subtle=webcrypto.subtle,wrap=subtle.wrapKey.bind(subtle),entered=deferred(),release=deferred();let held=false;
+ const restore=patchMethod(t,subtle,'wrapKey',async(...args)=>{if(!held&&new TextDecoder().decode(args[3].additionalData).includes('remembered-device:')){held=true;entered.resolve();await release.promise;}return wrap(...args);});
+ const pending=account.wrapRememberedSessionKey(key),rejected=assert.rejects(pending,error=>error.name==='LocalAccountConflict');await entered.promise;
+ await reset.recoverPassword({username:'bruno',recoveryCode:code,newPassword:SECOND_PASSWORD});const committed=await dump();release.resolve();await rejected;restore();
+ assert.deepEqual(await dump(),committed);assert.deepEqual(committed.vaults,before.vaults);
+});
+
+test('a reset committed during remembered restore prevents activation of the stale credential snapshot',async t=>{
+ const account=setup(t),profile=await register(account),key=await wrappingKey(),code=await account.createRecoveryCode(),envelope=await account.wrapRememberedSessionKey(key);account.lock();
+ const reset=createLocalAccount(),subtle=webcrypto.subtle,decrypt=subtle.decrypt.bind(subtle),entered=deferred(),release=deferred();let held=false;
+ const restore=patchMethod(t,subtle,'decrypt',async(...args)=>{if(!held){held=true;entered.resolve();await release.promise;}return decrypt(...args);});
+ const pending=account.unlockWithRememberedKey(profile.id,key,envelope),rejected=assert.rejects(pending,error=>error.name==='LocalAccountConflict');await entered.promise;
+ await reset.recoverPassword({username:'bruno',recoveryCode:code,newPassword:SECOND_PASSWORD});const committed=await dump();release.resolve();await rejected;restore();
+ assert.equal(account.getState().unlocked,false);assert.deepEqual(await dump(),committed);
+ await assert.rejects(()=>account.unlockWithRememberedKey(profile.id,key,envelope),error=>error.name==='LocalAccountAuthError');
+});
+
+test('verifyRecoveryCode authenticates only the current password profile and performs no storage or session mutation',async t=>{
+ const account=setup(t);await assert.rejects(()=>account.verifyRecoveryCode(fakeRecovery),error=>error.name==='LocalAccountLocked');
+ await account.enterGuest();const guest=await dumpGuest();await assert.rejects(()=>account.verifyRecoveryCode(fakeRecovery),error=>error.name==='LocalAccountAuthError');assert.deepEqual(await dumpGuest(),guest);
+ const profile=await register(account);await assert.rejects(()=>account.verifyRecoveryCode(fakeRecovery),error=>error.name==='LocalAccountAuthError');
+ const code=await account.createRecoveryCode();await account.mutateData(data=>{data.workouts.push({id:'verify-private',name:'Never returned by code verification'});});
+ const before=await dump(),state=account.getState();
+ assert.deepEqual(await account.verifyRecoveryCode(code.toLowerCase().replaceAll('-',' ')),{profileId:profile.id,generation:1});
+ assert.deepEqual(await dump(),before);assert.deepEqual(account.getState(),state);assert.deepEqual(await dumpGuest(),guest);
+});
+
+test('verifyRecoveryCode rejects old, malformed and other-profile tokens without rotating or locking the active session',async t=>{
+ const account=setup(t),a=await register(account,'alice'),old=await account.createRecoveryCode(),current=await account.createRecoveryCode();
+ let before=await dump(),state=account.getState();
+ for(const code of [old,fakeRecovery,'invalid',null]){
+  await assert.rejects(()=>account.verifyRecoveryCode(code),error=>error.name==='LocalAccountAuthError');assert.deepEqual(await dump(),before);assert.deepEqual(account.getState(),state);
+ }
+ assert.deepEqual(await account.verifyRecoveryCode(current),{profileId:a.id,generation:2});
+ await register(account,'bruno');await account.createRecoveryCode();before=await dump();state=account.getState();
+ await assert.rejects(()=>account.verifyRecoveryCode(current),error=>error.name==='LocalAccountAuthError');assert.deepEqual(await dump(),before);assert.deepEqual(account.getState(),state);
+});
+
+for(const phase of ['deriveKey','decrypt'])test(`a recovery-code rotation during verification ${phase} rejects the stale generation`,async t=>{
+ const account=setup(t);await register(account);const code=await account.createRecoveryCode(),rotator=createLocalAccount();await rotator.login('bruno',PASSWORD);
+ const subtle=webcrypto.subtle,original=subtle[phase].bind(subtle),entered=deferred(),release=deferred();let held=false;
+ const restore=patchMethod(t,subtle,phase,async(...args)=>{
+  if(!held&&(phase==='decrypt'||args[0]?.name==='HKDF')){held=true;entered.resolve();await release.promise;}
+  return original(...args);
+ });
+ const pending=account.verifyRecoveryCode(code),rejected=assert.rejects(pending,error=>error.name==='LocalAccountConflict');await entered.promise;
+ const latest=await rotator.createRecoveryCode(),committed=await dump(),state=account.getState();release.resolve();await rejected;restore();
+ assert.deepEqual(await dump(),committed);assert.deepEqual(account.getState(),state);
+ await assert.rejects(()=>account.verifyRecoveryCode(code),error=>error.name==='LocalAccountAuthError');
+ assert.deepEqual(await account.verifyRecoveryCode(latest),{profileId:state.profileId,generation:2});
+});
+
+test('lock cancels a pending recovery-code verification before it can return a credential generation',async t=>{
+ const account=setup(t);await register(account);const code=await account.createRecoveryCode(),before=await dump();
+ const subtle=webcrypto.subtle,decrypt=subtle.decrypt.bind(subtle),entered=deferred(),release=deferred();
+ const restore=patchMethod(t,subtle,'decrypt',async(...args)=>{entered.resolve();await release.promise;return decrypt(...args);});
+ const pending=account.verifyRecoveryCode(code),rejected=assert.rejects(pending,error=>error.name==='LocalAccountCancelled');await entered.promise;
+ account.lock();release.resolve();await rejected;restore();assert.deepEqual(await dump(),before);assert.equal(account.getState().unlocked,false);
+});
+
+test('read-only recovery verification does not refresh the known data revision or bypass a stale-data CAS conflict',async t=>{
+ const account=setup(t);await register(account);const code=await account.createRecoveryCode(),other=createLocalAccount();await other.login('bruno',PASSWORD);
+ const revision=account.getState().revision;await other.mutateData(data=>{data.workouts.push({id:'other-tab-data'});});const before=await dump();
+ assert.equal((await account.verifyRecoveryCode(code)).generation,1);assert.equal(account.getState().revision,revision);assert.deepEqual(await dump(),before);
+ await assert.rejects(()=>account.mutateData(data=>{data.workouts=[];}),error=>error.name==='LocalAccountConflict');assert.deepEqual(await dump(),before);
+});
+
+test('verifyPassword confirms the current password without mutating storage, session or known data revision',async t=>{
+ const account=setup(t),profile=await register(account);await account.mutateData(data=>{data.workouts.push({id:'password-proof-private'});});
+ let before=await dump(),state=account.getState();assert.deepEqual(await account.verifyPassword(PASSWORD),{profileId:profile.id});assert.deepEqual(await dump(),before);assert.deepEqual(account.getState(),state);
+ for(const password of [SECOND_PASSWORD,'short']){await assert.rejects(()=>account.verifyPassword(password));assert.deepEqual(await dump(),before);assert.deepEqual(account.getState(),state);}
+ const other=createLocalAccount();await other.login('bruno',PASSWORD);await other.mutateData(data=>{data.theme='dark';});before=await dump();state=account.getState();
+ await account.verifyPassword(PASSWORD);assert.deepEqual(await dump(),before);assert.deepEqual(account.getState(),state);
+ await assert.rejects(()=>account.mutateData(data=>{data.workouts=[];}),error=>error.name==='LocalAccountConflict');assert.deepEqual(await dump(),before);
+});
+
+test('verifyPassword rejects locked and guest access without disturbing guest records',async t=>{
+ const account=setup(t);await assert.rejects(()=>account.verifyPassword(PASSWORD),error=>error.name==='LocalAccountLocked');
+ await account.enterGuest();await account.mutateData(data=>{data.workouts.push({id:'guest-password-proof-safe'});});const before=await dumpGuest(),state=account.getState();
+ await assert.rejects(()=>account.verifyPassword(PASSWORD),error=>error.name==='LocalAccountAuthError');assert.deepEqual(await dumpGuest(),before);assert.deepEqual(account.getState(),state);
+});
+
+test('a reset during verifyPassword PBKDF2 rejects stale credentials without closing the already open profile',async t=>{
+ const account=setup(t);await register(account);const code=await account.createRecoveryCode(),reset=createLocalAccount(),state=account.getState();
+ const subtle=webcrypto.subtle,derive=subtle.deriveKey.bind(subtle),entered=deferred(),release=deferred();let held=false;
+ const restore=patchMethod(t,subtle,'deriveKey',async(...args)=>{if(!held&&args[0]?.name==='PBKDF2'){held=true;entered.resolve();await release.promise;}return derive(...args);});
+ const pending=account.verifyPassword(PASSWORD),rejected=assert.rejects(pending,error=>error.name==='LocalAccountConflict');await entered.promise;
+ await reset.recoverPassword({username:'bruno',recoveryCode:code,newPassword:SECOND_PASSWORD});const committed=await dump();release.resolve();await rejected;restore();
+ assert.deepEqual(await dump(),committed);assert.deepEqual(account.getState(),state);
+ await assert.rejects(()=>account.verifyPassword(PASSWORD),error=>error.name==='LocalAccountAuthError');assert.deepEqual(await account.verifyPassword(SECOND_PASSWORD),{profileId:state.profileId});
+});
+
+test('lock cancels verifyPassword while PBKDF2 is pending without any credential or data writes',async t=>{
+ const account=setup(t);await register(account);const before=await dump(),subtle=webcrypto.subtle,derive=subtle.deriveKey.bind(subtle),entered=deferred(),release=deferred();
+ const restore=patchMethod(t,subtle,'deriveKey',async(...args)=>{entered.resolve();await release.promise;return derive(...args);});
+ const pending=account.verifyPassword(PASSWORD),rejected=assert.rejects(pending,error=>error.name==='LocalAccountCancelled');await entered.promise;
+ account.lock();release.resolve();await rejected;restore();assert.equal(account.getState().unlocked,false);assert.deepEqual(await dump(),before);
+});
+
+test('an old password verification cannot replace or close a manual login to another profile',async t=>{
+ const account=setup(t);await register(account,'alice');const b=await register(account,'bruno',SECOND_PASSWORD);await account.login('alice',PASSWORD);
+ const subtle=webcrypto.subtle,derive=subtle.deriveKey.bind(subtle),entered=deferred(),release=deferred();let held=false;
+ const restore=patchMethod(t,subtle,'deriveKey',async(...args)=>{if(!held){held=true;entered.resolve();await release.promise;}return derive(...args);});
+ const pending=account.verifyPassword(PASSWORD),rejected=assert.rejects(pending,error=>error.name==='LocalAccountCancelled');await entered.promise;
+ await account.login('bruno',SECOND_PASSWORD);const before=await dump(),state=account.getState();release.resolve();await rejected;restore();
+ assert.equal(account.getState().profileId,b.id);assert.deepEqual(account.getState(),state);assert.deepEqual(await dump(),before);
+});

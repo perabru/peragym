@@ -50,7 +50,7 @@ async function harness(t,{activeSession=null,confirm=true}={}){
   document,location:new URL('https://perabru.github.io/peragym/docs/app/'),navigator:{onLine:true},sessionStorage:{getItem(){return null;},setItem(){},removeItem(){}},localAccount,store,
   createOperationLoading:()=>({run:(message,task)=>{loadingCalls.push(message);return task();},start:message=>{loadingCalls.push(message);const operation={message,updates:[],releases:0};loadingOperations.push(operation);const release=()=>{operation.releases++;};release.update=value=>{operation.updates.push(value);};return release;},clear(){},track:(_message,promise)=>promise}),
   readMusicConnectionConfig:()=>({spotifyClientId:'',googleClientId:''}),saveMusicConnectionConfig(){},clearMusicConnectionConfig(){},
-  createLocalBiometric:()=>({}),createLocalAuthUI:()=>({hasPendingRecovery:()=>pendingRecovery,render(){authRenderCount++;},settingsMarkup:()=>'',bindSettings(){},reset:async()=>{},initialize:async()=>{}}),
+  createLocalBiometric:()=>({}),createLocalDeviceSession:()=>({clear:()=>commit('clearDeviceSession',[],()=>undefined)}),createLocalAuthUI:()=>({hasPendingRecovery:()=>pendingRecovery,render(){authRenderCount++;},settingsMarkup:()=>'',bindSettings(){},reset:async()=>{},initialize:async()=>{}}),
   createMusicPlayer:()=>({close(){playerCalls.push({name:'close'});},load:async value=>{playerCalls.push({name:'load',value:clone(value)});},loadQueue:async(items,options)=>{playerCalls.push({name:'loadQueue',items:clone(items),options:clone(options)});return {index:options.index,length:items.length};},getQueueState:()=>null,openAccount:(provider,profile)=>{playerCalls.push({name:'openAccount',provider,profile:clone(profile)});},setMessage:message=>{playerCalls.push({name:'setMessage',message});}}),createYouTubeAccount:()=>({}),createSpotifyAccount:()=>({}),parseMusicLink,renderChart:()=>'',filterRange:points=>points,summarize:()=>({count:0,last:null}),
   setInterval:(fn,ms)=>{const id=++nextTimer;timers.set(id,{fn,ms});return id;},clearInterval:id=>timers.delete(id),setTimeout:(fn,ms)=>{const id=++nextTimer;timers.set(id,{fn,ms});return id;},clearTimeout:id=>timers.delete(id),
   __showEditor:value=>{editorEvents.push({workout:clone(value),active:clone(vmContext.__appTest.getState().active),saved:clone(model.activeSession)});element('#editor').open=true;},
@@ -390,4 +390,18 @@ for(const outcome of ['resolve','reject'])test(`a delayed recent-link write that
  const next=env.app.getState().data;next.musicLinks=['https://www.youtube.com/watch?v=video000999'];env.app.setState({data:next});
  if(outcome==='resolve')pending.resolve();else pending.reject(new Error('Gravação do perfil anterior falhou'));await remembering;
  assert.deepEqual(env.app.getState().data.musicLinks,next.musicLinks);assert.equal(env.notices.includes('Não foi possível salvar o link nos recentes.'),false);
+});
+
+
+test('sign out waits for durable remembered-session removal before clearing the active profile',async t=>{
+ const env=await harness(t),pending=env.deferNext('clearDeviceSession');
+ const before=env.app.getState(),closing=env.app.lockApp();await flush();
+ assert.equal(env.accountState().unlocked,true);assert.deepEqual(env.app.getState().data,before.data);assert.equal(env.playerCalls.length,0);
+ pending.resolve();await closing;assert.equal(env.accountState().unlocked,false);assert.deepEqual(env.app.getState().data.workouts,[]);
+});
+
+test('failed remembered-session removal never claims sign out or clears the current workout data',async t=>{
+ const env=await harness(t),pending=env.deferNext('clearDeviceSession'),before=env.app.getState();
+ const closing=env.app.lockApp(),rejected=assert.rejects(closing,/storage failed/);pending.reject(new Error('storage failed'));await rejected;
+ assert.equal(env.accountState().unlocked,true);assert.deepEqual(env.app.getState(),before);assert.equal(env.playerCalls.length,0);
 });

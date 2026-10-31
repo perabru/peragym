@@ -6,7 +6,7 @@ import {createLocalBiometric} from './local-biometric.js';
 import {createLocalAccount} from './local-account.js';
 
 const require=createRequire(import.meta.url);
-const {IDBFactory}=require(process.env.PERAGYM_FAKE_IDB||'fake-indexeddb');
+const {IDBFactory,IDBDatabase}=require(process.env.PERAGYM_FAKE_IDB||'fake-indexeddb');
 const ORIGIN='https://perabru.github.io',RP='perabru.github.io';
 const PROFILE={id:'d1630109-dc02-4cba-ac0c-24b860ae55c7',name:'Bruno',username:'bruno'};
 const encoder=new TextEncoder();
@@ -93,7 +93,9 @@ async function device(options={}) {
 }
 
 async function core() {
-  let generation=1,unlocked=true;
+  let generation=1,unlocked=true,recoveryGeneration=1;
+  let recoveryCode='PG-0123-4567-89AB-CDEF-GHJK-MNPQ-RSTV-WXYZ';
+  const generatedCode=value=>'PG-'+String(value).padStart(4,'0')+'-1111-2222-3333-4444-5555-6666-7777';
   const key=await webcrypto.subtle.generateKey({name:'AES-GCM',length:256},true,['encrypt','decrypt']);
   const iv=random(12),vault=await webcrypto.subtle.encrypt({name:'AES-GCM',iv},key,encoder.encode('private workout records'));
   const calls={wrap:0,unlock:0};
@@ -101,6 +103,22 @@ async function core() {
   return {calls,
     getState:()=>({supported:true,unlocked,profileId:unlocked?PROFILE.id:null,profile:unlocked?{...PROFILE}:null,generation}),
     lock(){generation++;unlocked=false;},
+    async getRecoveryStatus(options={}) {
+      assert.equal(unlocked,true);
+      return {enabled:recoveryGeneration>0,...(options.includeGeneration?{generation:recoveryGeneration}:{})};
+    },
+    async createRecoveryCode() {
+      assert.equal(unlocked,true);recoveryGeneration++;
+      recoveryCode=generatedCode(recoveryGeneration);return recoveryCode;
+    },
+    async verifyRecoveryCode(code) {
+      assert.equal(unlocked,true);
+      if(!recoveryGeneration||String(code).replace(/[- ]/g,'').toUpperCase()!==recoveryCode.replace(/-/g,'')) {
+        throw Object.assign(new Error('O código de recuperação mudou. Gere ou proteja o código atual.'),{name:'LocalAccountAuthError'});
+      }
+      return {profileId:PROFILE.id,generation:recoveryGeneration};
+    },
+    setRecoveryGeneration(value){recoveryGeneration=value;recoveryCode=generatedCode(value);},
     async wrapSessionKey(wrappingKey) {
       assert.equal(unlocked,true);calls.wrap++;
       assert.equal(wrappingKey.extractable,false);
@@ -159,7 +177,7 @@ test('enrollment and unlock decrypt the wrapped vault key; only public metadata 
   assert.equal(await env.biometric.hasEnrollment(PROFILE.id),true);
   assert.deepEqual(env.account.calls,{wrap:1,unlock:1},'Enrollment must prove the encrypted vault roundtrip');
   const [saved]=await records(env.indexedDB);
-  assert.deepEqual(Object.keys(saved).sort(),['algorithm','createdAt','credentialId','envelope','hkdfSalt','origin','prfSalt','profileId','publicKey','rpId','signCount','updatedAt','version'].sort());
+  assert.deepEqual(Object.keys(saved).sort(),['algorithm','createdAt','credentialId','envelope','hkdfSalt','origin','prfSalt','profileId','publicKey','revision','rpId','signCount','updatedAt','version'].sort());
   assert.equal(saved.envelope.ciphertext.length,64);
   assert.equal(saved.signCount,1);
   assert.equal(JSON.stringify(saved).includes('private workout'),false);
@@ -322,4 +340,245 @@ test('real local account module opens its encrypted records through PRF, without
   assert.deepEqual((await account.readData()).musicLinks,['https://music.youtube.com/watch?v=dQw4w9WgXcQ']);
   await env.biometric.remove(id);account.lock();await account.login('bruno','senha local de teste');
   assert.equal(account.getState().unlocked,true,'Password access remains available after device unlock removal');
+});
+
+const CODE='PG-0123-4567-89AB-CDEF-GHJK-MNPQ-RSTV-WXYZ';
+
+test('recovery code enrollment shares its signed assertion, encrypts at rest and requires a fresh assertion to read',async()=>{
+  const env=await setup();
+  assert.deepEqual(await env.biometric.getRecoveryCodeStatus(PROFILE.id),{protected:false});
+  assert.deepEqual(await env.biometric.enroll({recoveryCode:CODE}),{profileId:PROFILE.id,protected:true});
+  assert.equal(env.provider.requests.length,2,'Register and one signed confirmation also protect the code');
+  const [record]=await records(env.indexedDB);
+  assert.equal(record.recoveryCodeEnvelope.recoveryGeneration,1);
+  assert.equal(raw(record.recoveryCodeEnvelope.ciphertext).length,58);
+  assert.equal(JSON.stringify(record).includes(CODE),false);
+  const requestCount=env.provider.requests.length;
+  assert.deepEqual(await env.biometric.getRecoveryCodeStatus(PROFILE.id),{protected:true});
+  assert.equal(env.provider.requests.length,requestCount,'Status returns metadata without opening a biometric prompt');
+  assert.equal(await env.biometric.readRecoveryCode(),CODE);
+  assert.equal(env.provider.requests.length,requestCount+1);
+  assert.equal((await records(env.indexedDB))[0].signCount,2);
+  assert.notEqual(b64(env.provider.requests[1].request.publicKey.challenge),b64(env.provider.requests[2].request.publicKey.challenge));
+});
+
+test('recovery encryption uses a separate credential-bound HKDF key and PRF output is cleared',async()=>{
+  let output;
+  const env=await setup({assertionCredential:credential=>{output=credential.getClientExtensionResults().prf.results.first;}});
+  await env.biometric.enroll({recoveryCode:CODE});
+  assert(new Uint8Array(output).every(value=>value===0));
+  const [record]=await records(env.indexedDB),credential=env.provider.credentials.get(record.credentialId);
+  const hmac=await webcrypto.subtle.importKey('raw',credential.master,{name:'HMAC',hash:'SHA-256'},false,['sign']);
+  const secret=await webcrypto.subtle.sign('HMAC',hmac,raw(record.prfSalt));
+  const material=await webcrypto.subtle.importKey('raw',secret,'HKDF',false,['deriveKey']);
+  const derive=purpose=>webcrypto.subtle.deriveKey({name:'HKDF',hash:'SHA-256',salt:raw(record.hkdfSalt),
+    info:encoder.encode(JSON.stringify(['PeraGym',purpose,1,ORIGIN,RP,PROFILE.id,...(purpose==='biometric-recovery-code'?[record.credentialId]:[])]))},material,
+    {name:'AES-GCM',length:256},false,['decrypt']);
+  const options={name:'AES-GCM',iv:raw(record.recoveryCodeEnvelope.iv),additionalData:encoder.encode(JSON.stringify([
+    'PeraGym','biometric-recovery-code',1,ORIGIN,RP,PROFILE.id,record.credentialId,1]))};
+  const cipher=raw(record.recoveryCodeEnvelope.ciphertext);
+  await assert.rejects(()=>derive('biometric-prf').then(key=>webcrypto.subtle.decrypt(options,key,cipher)));
+  const clear=await webcrypto.subtle.decrypt(options,await derive('biometric-recovery-code'),cipher);
+  assert.equal(new TextDecoder().decode(clear),CODE);
+});
+
+test('protecting an existing code requires fresh UV and failures preserve the previously encrypted code',async()=>{
+  const env=await setup();await env.biometric.enroll();
+  assert.deepEqual(await env.biometric.protectRecoveryCode(CODE),{profileId:PROFILE.id,protected:true});
+  const before=await records(env.indexedDB);
+  env.provider.options.getError=Object.assign(new Error('cancelled'),{name:'NotAllowedError'});
+  await assert.rejects(()=>env.biometric.protectRecoveryCode(CODE),error=>error.code==='cancelled');
+  await assert.rejects(()=>env.biometric.readRecoveryCode(),error=>error.code==='cancelled');
+  assert.deepEqual(await records(env.indexedDB),before);
+  delete env.provider.options.getError;
+  env.provider.options.noPrf=true;
+  await assert.rejects(()=>env.biometric.readRecoveryCode(),error=>error.code==='prf-unavailable');
+  assert.deepEqual(await records(env.indexedDB),before);
+});
+
+test('locked, stale-session and unsupported recovery requests never disclose a saved code',async()=>{
+  const env=await setup();await env.biometric.enroll({recoveryCode:CODE});
+  env.provider.options.assertionCredential=()=>env.account.lock();
+  await assert.rejects(()=>env.biometric.readRecoveryCode(),error=>error.code==='session-changed');
+  await assert.rejects(()=>env.biometric.getRecoveryCodeStatus(PROFILE.id));
+  await assert.rejects(()=>env.biometric.protectRecoveryCode(CODE));
+  await assert.rejects(()=>env.biometric.rotateRecoveryCode());
+  const other=await setup();await other.biometric.enroll({recoveryCode:CODE});
+  other.provider.options.capabilities={'extension:prf':false};
+  await assert.rejects(()=>other.biometric.readRecoveryCode(),error=>error.code==='unsupported');
+});
+
+test('recovery generation changes invalidate the device copy without deleting the biometric login',async()=>{
+  const env=await setup();await env.biometric.enroll({recoveryCode:CODE});
+  env.account.setRecoveryGeneration(2);
+  assert.deepEqual(await env.biometric.getRecoveryCodeStatus(PROFILE.id),{protected:false});
+  const count=env.provider.requests.length;
+  await assert.rejects(()=>env.biometric.readRecoveryCode(),error=>error.code==='recovery-stale');
+  assert.equal(env.provider.requests.length,count,'Stale saved codes are rejected before requesting the device');
+  assert.equal(await env.biometric.hasEnrollment(PROFILE.id),true);
+  env.account.lock();await env.biometric.unlock(PROFILE.id);
+});
+
+test('ciphertext, origin, generation and credential binding changes fail closed',async()=>{
+  for(const alteration of ['ciphertext','origin','generation','credential']) {
+    const env=await setup();await env.biometric.enroll({recoveryCode:CODE});
+    await records(env.indexedDB,record=>{
+      const envelope=record.recoveryCodeEnvelope;
+      if(alteration==='ciphertext'){const value=raw(envelope.ciphertext);value[0]^=1;envelope.ciphertext=b64(value);}
+      if(alteration==='origin')envelope.origin='https://evil.example';
+      if(alteration==='generation')envelope.recoveryGeneration++;
+      if(alteration==='credential')envelope.credentialId=b64(random(32));
+    });
+    await assert.rejects(()=>env.biometric.readRecoveryCode());
+    assert.equal(await env.biometric.hasEnrollment(PROFILE.id),true);
+    assert.equal((await records(env.indexedDB)).length,1);
+  }
+});
+
+test('rotation confirms the device before creating a new code, saves its generation and can read it later',async()=>{
+  const env=await setup();await env.biometric.enroll({recoveryCode:CODE});
+  let generated=0;const create=env.account.createRecoveryCode;
+  env.account.createRecoveryCode=async()=>{generated++;return create();};
+  env.provider.options.getError=Object.assign(new Error('cancelled'),{name:'NotAllowedError'});
+  await assert.rejects(()=>env.biometric.rotateRecoveryCode());assert.equal(generated,0);
+  delete env.provider.options.getError;
+  const result=await env.biometric.rotateRecoveryCode();
+  assert.equal(result.protected,true);assert.equal(generated,1);
+  assert.equal((await records(env.indexedDB))[0].recoveryCodeEnvelope.recoveryGeneration,2);
+  assert.equal(await env.biometric.readRecoveryCode(),result.code);
+});
+
+test('a committed new code remains available to the authenticated UI if its encrypted device copy cannot be saved',async t=>{
+  const env=await setup();await env.biometric.enroll({recoveryCode:CODE});
+  const before=(await records(env.indexedDB))[0].recoveryCodeEnvelope;
+  const transaction=IDBDatabase.prototype.transaction;
+  t.after(()=>{IDBDatabase.prototype.transaction=transaction;});
+  let failStorage=false;const create=env.account.createRecoveryCode;
+  env.account.createRecoveryCode=async()=>{const code=await create();failStorage=true;return code;};
+  IDBDatabase.prototype.transaction=function(names,mode,...args){
+    if(failStorage&&mode==='readwrite')throw new Error('storage full');
+    return transaction.call(this,names,mode,...args);
+  };
+  const result=await env.biometric.rotateRecoveryCode();
+  assert.equal(result.protected,false);assert.match(result.code,/^PG-/);assert.equal(typeof result.error,'string');
+  assert.deepEqual((await records(env.indexedDB))[0].recoveryCodeEnvelope,before);
+  assert.deepEqual(await env.biometric.getRecoveryCodeStatus(PROFILE.id),{protected:false});
+});
+
+test('a recovery generation changed by another tab during rotation never returns its obsolete code',async()=>{
+  const env=await setup();await env.biometric.enroll({recoveryCode:CODE});
+  const create=env.account.createRecoveryCode;
+  env.account.createRecoveryCode=async()=>{const code=await create();env.account.setRecoveryGeneration(3);return code;};
+  await assert.rejects(()=>env.biometric.rotateRecoveryCode(),error=>error.name==='LocalAccountAuthError');
+  assert.equal((await records(env.indexedDB))[0].recoveryCodeEnvelope.recoveryGeneration,1);
+});
+
+test('removal or re-enrollment during an assertion cannot revive an old encrypted enrollment or code',async()=>{
+  for(const method of ['protect','unlock','enroll']) {
+    const env=await setup();await env.biometric.enroll({recoveryCode:CODE});
+    const other=createLocalBiometric({account:await core(),environment:env.environment});
+    env.provider.options.assertionCredential=async()=>{delete env.provider.options.assertionCredential;await other.remove(PROFILE.id);};
+    if(method==='protect')await assert.rejects(()=>env.biometric.protectRecoveryCode(CODE),error=>error.code==='enrollment-changed');
+    if(method==='enroll')await assert.rejects(()=>env.biometric.enroll(),error=>error.code==='enrollment-changed');
+    if(method==='unlock'){env.account.lock();await assert.rejects(()=>env.biometric.unlock(PROFILE.id),error=>error.code==='enrollment-changed');assert.equal(env.account.getState().unlocked,false);}
+    assert.equal((await records(env.indexedDB)).length,0);
+  }
+});
+
+test('concurrent assertions cannot move the persisted signature counter backwards',async()=>{
+  const env=await setup();await env.biometric.enroll();
+  const other=createLocalBiometric({account:env.account,environment:env.environment});
+  let resume,started;const waiting=new Promise(resolve=>{resume=resolve;}),entered=new Promise(resolve=>{started=resolve;});
+  env.provider.options.assertionCredential=async(_credential,record)=>{if(record.counter===2){started();await waiting;}};
+  const first=env.biometric.protectRecoveryCode(CODE);await entered;
+  await other.protectRecoveryCode(CODE);resume();
+  await assert.rejects(()=>first,error=>error.code==='enrollment-changed');
+  assert.equal((await records(env.indexedDB))[0].signCount,3);
+});
+
+test('successful credential replacement and removal discard the encrypted recovery copy',async()=>{
+  const env=await setup();await env.biometric.enroll({recoveryCode:CODE});
+  const credential=(await records(env.indexedDB))[0].credentialId;
+  await env.biometric.enroll();
+  assert.notEqual((await records(env.indexedDB))[0].credentialId,credential);
+  assert.deepEqual(await env.biometric.getRecoveryCodeStatus(PROFILE.id),{protected:false});
+  await assert.rejects(()=>env.biometric.readRecoveryCode(),error=>error.code==='recovery-unavailable');
+  await env.biometric.protectRecoveryCode(CODE);await env.biometric.remove(PROFILE.id);
+  assert.deepEqual(await env.biometric.getRecoveryCodeStatus(PROFILE.id),{protected:false});
+});
+
+test('an old pending code cannot be protected under a newer recovery generation before or during device confirmation',async()=>{
+  for(const moment of ['before','during']) {
+    const env=await setup();await env.biometric.enroll({recoveryCode:CODE});
+    const previous=(await records(env.indexedDB))[0].recoveryCodeEnvelope;
+    const count=env.provider.requests.length;
+    if(moment==='before')env.account.setRecoveryGeneration(2);
+    else env.provider.options.assertionCredential=()=>env.account.setRecoveryGeneration(2);
+    await assert.rejects(()=>env.biometric.protectRecoveryCode(CODE),error=>error.name==='LocalAccountAuthError');
+    assert.deepEqual((await records(env.indexedDB))[0].recoveryCodeEnvelope,previous);
+    assert.deepEqual(await env.biometric.getRecoveryCodeStatus(PROFILE.id),{protected:false});
+    if(moment==='before')assert.equal(env.provider.requests.length,count,'Known stale plaintext does not trigger a device prompt');
+  }
+});
+
+test('locking after code creation prevents a stale operation from disclosing its newly generated code',async()=>{
+  const env=await setup();await env.biometric.enroll({recoveryCode:CODE});
+  const create=env.account.createRecoveryCode;
+  env.account.createRecoveryCode=async()=>{const code=await create();env.account.lock();return code;};
+  await assert.rejects(()=>env.biometric.rotateRecoveryCode(),error=>error.code==='session-changed');
+  assert.equal(env.account.getState().unlocked,false);
+});
+
+test('real encrypted account recovery codes roundtrip through PRF and invalidate correctly after password recovery',async t=>{
+  const previous=Object.fromEntries(['crypto','indexedDB'].map(key=>[key,Object.getOwnPropertyDescriptor(globalThis,key)]));
+  const indexedDB=new IDBFactory();
+  Object.defineProperty(globalThis,'crypto',{configurable:true,value:webcrypto});
+  Object.defineProperty(globalThis,'indexedDB',{configurable:true,value:indexedDB});
+  t.after(()=>{for(const [key,value] of Object.entries(previous)){if(value)Object.defineProperty(globalThis,key,value);else delete globalThis[key];}});
+  const account=createLocalAccount();await account.register({name:'Recovery',username:'recovery',password:'local password test'});
+  const id=account.getState().profile.id,code=await account.createRecoveryCode();
+  const env=await setup({account,environment:{indexedDB}});
+  await env.biometric.enroll({recoveryCode:code});
+  account.lock();await env.biometric.unlock(id);
+  assert.equal(await env.biometric.readRecoveryCode(),code);
+  const rotated=await env.biometric.rotateRecoveryCode();assert.equal(rotated.protected,true);
+  assert.equal(await env.biometric.readRecoveryCode(),rotated.code);
+  account.lock();
+  const recovered=await account.recoverPassword({username:'recovery',recoveryCode:rotated.code,newPassword:'another local password'});
+  assert.deepEqual(await env.biometric.getRecoveryCodeStatus(id),{protected:false});
+  await assert.rejects(()=>env.biometric.protectRecoveryCode(rotated.code),error=>error.name==='LocalAccountAuthError');
+  await env.biometric.protectRecoveryCode(recovered.recoveryCode);
+  assert.equal(await env.biometric.readRecoveryCode(),recovered.recoveryCode);
+});
+
+test('real cross-tab rotation during biometric encryption cannot expose the invalidated intermediate code',async t=>{
+  const previous=Object.fromEntries(['crypto','indexedDB'].map(key=>[key,Object.getOwnPropertyDescriptor(globalThis,key)]));
+  const indexedDB=new IDBFactory();
+  Object.defineProperty(globalThis,'crypto',{configurable:true,value:webcrypto});
+  Object.defineProperty(globalThis,'indexedDB',{configurable:true,value:indexedDB});
+  t.after(()=>{for(const [key,value] of Object.entries(previous)){if(value)Object.defineProperty(globalThis,key,value);else delete globalThis[key];}});
+  const account=createLocalAccount();await account.register({name:'Race',username:'race',password:'local password race'});
+  const id=account.getState().profile.id,initialCode=await account.createRecoveryCode();
+  const second=createLocalAccount();await second.login('race','local password race');
+  let block=false,resume,entered;
+  const waiting=new Promise(resolve=>{resume=resolve;}),started=new Promise(resolve=>{entered=resolve;});
+  const subtle=new Proxy(webcrypto.subtle,{get(target,property){
+    if(property==='encrypt')return async(...args)=>{
+      if(block){block=false;entered();await waiting;}
+      return target.encrypt(...args);
+    };
+    const member=Reflect.get(target,property);return typeof member==='function'?member.bind(target):member;
+  }});
+  const crypto={getRandomValues:value=>webcrypto.getRandomValues(value),subtle};
+  const env=await setup({account,environment:{indexedDB,crypto}});
+  await env.biometric.enroll({recoveryCode:initialCode});
+  let intermediateCode;const create=account.createRecoveryCode;
+  account.createRecoveryCode=async()=>{intermediateCode=await create();return intermediateCode;};
+  block=true;const pending=env.biometric.rotateRecoveryCode();await started;
+  const latestCode=await second.createRecoveryCode();resume();
+  await assert.rejects(()=>pending,error=>error.name==='LocalAccountAuthError'||error.name==='LocalAccountConflict');
+  assert.notEqual(latestCode,intermediateCode);
+  await assert.rejects(()=>account.verifyRecoveryCode(intermediateCode),error=>error.name==='LocalAccountAuthError');
+  assert.equal((await account.verifyRecoveryCode(latestCode)).profileId,id);
+  assert.deepEqual(await env.biometric.getRecoveryCodeStatus(id),{protected:false});
 });

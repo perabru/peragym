@@ -352,3 +352,14 @@ input::placeholder,textarea::placeholder{color:var(--muted);opacity:.8}textarea{
 .music-config-dialog details{font-size:11px;line-height:1.7}.music-config-dialog details label{margin-top:15px}.music-config-dialog details p{margin:15px 0}
 .music-config-dialog .text-button{min-height:44px;color:var(--cyan);font-size:11px}
 @media(max-width:480px){.music-simple .setting-card{padding:19px}.music-tracks{max-height:390px}.music-track-paging{gap:5px}.music-config-dialog .confirm-content{padding:21px}}
+
+/* Local device access stays an explicit choice. */
+.auth-card .auth-remember{display:flex;align-items:flex-start;gap:11px;margin:7px 0 14px;font-size:12px;line-height:1.5;text-align:left}
+.auth-card .auth-remember input{flex:0 0 19px;width:19px;height:19px;margin:2px 0 0;accent-color:var(--pink,#ec4899)}
+.auth-remember span{display:block}.auth-remember small{display:block;margin-top:5px;font-size:11px;line-height:1.5;color:var(--muted)}
+.auth-recovery-protection{display:grid;gap:8px;margin-top:16px;padding-top:16px;border-top:1px solid var(--line,rgba(236,72,153,.25))}
+.auth-recovery-protection .form-hint{margin:0;line-height:1.6}.auth-recovery-protection .button{white-space:normal}
+.local-device-card [role=status],.local-recovery-card [role=status]{line-height:1.6}
+.auth-current-password{display:grid;gap:9px;margin:18px 0;font-size:12px;font-weight:700}
+.auth-current-password input{width:100%;min-height:48px;padding:12px 14px;border:1px solid var(--line,rgba(236,72,153,.35));border-radius:10px;background:var(--surface,#211331);color:var(--ink,#241338);font:inherit}
+.auth-current-password input:focus-visible{outline:2px solid var(--cyan,#64f4fa);outline-offset:3px}

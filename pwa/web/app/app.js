@@ -1,15 +1,16 @@
-import {createOperationLoading} from './operation-loading.js?v=3.8.0';
-import {createSession,normalizeSession,elapsedSeconds,pauseSession,resumeSession,restartSession} from './workout-session.js?v=3.8.0';
-import * as store from './db.js?v=3.8.0';
-import {parseMusicLink} from './music-links.js?v=3.8.0';
-import {localAccount} from './local-account.js?v=3.8.0';
-import {createLocalBiometric} from './local-biometric.js?v=3.8.0';
-import {createLocalAuthUI} from './local-auth-ui.js?v=3.8.0';
-import {createYouTubeAccount} from './youtube-account.js?v=3.8.0';
-import {createSpotifyAccount} from './spotify-account.js?v=3.8.0';
-import {createMusicPlayer} from './music-player.js?v=3.8.0';
-import {readMusicConnectionConfig,saveMusicConnectionConfig,clearMusicConnectionConfig} from './music-connection-config.js?v=3.8.0';
-import {renderChart,filterRange,summarize} from './charts.js?v=3.8.0';
+import {createOperationLoading} from './operation-loading.js?v=3.9.0';
+import {createSession,normalizeSession,elapsedSeconds,pauseSession,resumeSession,restartSession} from './workout-session.js?v=3.9.0';
+import * as store from './db.js?v=3.9.0';
+import {parseMusicLink} from './music-links.js?v=3.9.0';
+import {localAccount} from './local-account.js?v=3.9.0';
+import {createLocalBiometric} from './local-biometric.js?v=3.9.0';
+import {createLocalDeviceSession} from './local-device-session.js?v=3.9.0';
+import {createLocalAuthUI} from './local-auth-ui.js?v=3.9.0';
+import {createYouTubeAccount} from './youtube-account.js?v=3.9.0';
+import {createSpotifyAccount} from './spotify-account.js?v=3.9.0';
+import {createMusicPlayer} from './music-player.js?v=3.9.0';
+import {readMusicConnectionConfig,saveMusicConnectionConfig,clearMusicConnectionConfig} from './music-connection-config.js?v=3.9.0';
+import {renderChart,filterRange,summarize} from './charts.js?v=3.9.0';
 'use strict';
 const cassette = () => '<img src="/assets/cassette.svg" class="cassette-icon" alt="" aria-hidden="true">';
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -43,7 +44,8 @@ let spotifyAccount=null, youtubeAccount=null, musicConfigLoaded=false, spotifyPl
 let legacyStatus=null, youtubePreparing=false, youtubePreparation=0;
 let spotifyTracks=[],selectedMusicPlaylist=null,musicTrackRequest=0,musicConnecting=false,musicPlaylistSearch='',musicTrackSearch='',musicTrackPage=0,musicPlaylistFailure=null;
 const localBiometric=createLocalBiometric({account:localAccount});
-const authUI=createLocalAuthUI({mount:$('#main'),account:localAccount,biometric:localBiometric,onUnlock:unlockApp,onLock:lockApp,onBusy:authBusy,onRefresh:async()=>{await refresh();render();}});
+const localDeviceSession=createLocalDeviceSession({account:localAccount});
+const authUI=createLocalAuthUI({mount:$('#main'),account:localAccount,biometric:localBiometric,deviceSession:localDeviceSession,onUnlock:unlockApp,onLock:lockApp,onBusy:authBusy,onRefresh:async()=>{await refresh();render();}});
 let returningFromSpotify=new URLSearchParams(location.search).has('state') && (new URLSearchParams(location.search).has('code')||new URLSearchParams(location.search).has('error'));
 if(returningFromSpotify)page='musica';
 const formatKg = n => Number(n).toLocaleString('pt-BR',{maximumFractionDigits:2});
@@ -535,6 +537,7 @@ async function unlockApp(){
   void initializeMusic();
 }
 async function lockApp(){
+  await localDeviceSession.clear();
   operationLoading.clear();authBusyRelease=null;
   musicGeneration++;playlistRequest++;youtubeRequest++;musicTrackRequest++;youtubePreparation++;youtubePreparing=false;
   musicPlayer.close();spotifyAccount?.disconnect();youtubeAccount?.disconnect({revoke:false});
@@ -546,12 +549,12 @@ async function lockApp(){
   active=null;selectedId=null;page='inicio';youtubePreparing=false;
   clearInterval(timerHandle);clearInterval(restHandle);$('.rest-pill')?.remove();
   data={workouts:[],sessions:[],loadHistory:[],bodyWeights:[],musicLinks:[],theme:data.theme};
-  render();await authUI.reset();render();$('#main').focus();
+  await authUI.reset();render();$('#main').focus();
 }
 async function init(){
   if(window.__peragymSpotifyReturn)return;
   try{
-    await authUI.initialize();render();
+    await authUI.initialize();await authUI.restoreRememberedSession();render();
     window.dispatchEvent(new Event('peragym:app-ready'));
     if(!window.__peragymBootManaged){$('#app').hidden=false;$('#loading')?.remove();}
   }catch(error){
