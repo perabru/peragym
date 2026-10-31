@@ -1,5 +1,5 @@
 /* PeraGym's personal data stays in this browser's private IndexedDB. */
-import {parseYouTubeLink} from './music-links.js?v=3.1.0';
+import {parseYouTubeLink} from './music-links.js?v=3.2.0';
 
 const DB_NAME = 'peragym-local';
 const VERSION = 1;

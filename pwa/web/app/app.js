@@ -1,7 +1,7 @@
-import * as store from './db.js?v=3.1.0';
-import {parseYouTubeLink} from './music-links.js?v=3.1.0';
-import {createMusicPlayer} from './music-player.js?v=3.1.0';
-import {renderChart,filterRange,summarize} from './charts.js?v=3.1.0';
+import * as store from './db.js?v=3.2.0';
+import {parseYouTubeLink} from './music-links.js?v=3.2.0';
+import {createMusicPlayer} from './music-player.js?v=3.2.0';
+import {renderChart,filterRange,summarize} from './charts.js?v=3.2.0';
 'use strict';
 const cassette = () => '<img src="/assets/cassette.svg" class="cassette-icon" alt="" aria-hidden="true">';
 const $ = (selector, root = document) => root.querySelector(selector);

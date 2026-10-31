@@ -1,44 +1,36 @@
-# PeraGym PWA — Vice Training 3.1.0
+# PeraGym 3.2
 
-**[Abrir o PeraGym e instalar grátis](https://peragym-treino.perabru.chatgpt.site/)**
+**[Abrir o site](https://perabru.github.io/peragym/) · [Abrir o aplicativo](https://perabru.github.io/peragym/docs/app/)**
 
-Aplicativo gratuito em HTML, CSS e JavaScript, instalável como PWA no Android e no iOS, com banco IndexedDB local, fichas de treino e gráficos de evolução de cargas e peso corporal.
+PWA gratuito para Android e iPhone. Fichas de treino, cargas em quilos, peso corporal, gráficos e histórico no banco local do aparelho. Visual neon e fita cassete nos botões de salvar.
 
-A versão **3.1.0 — Vice Training** traz textos mais curtos e visual retrô tropical, neon rosa e ciano, atmosfera roxa, palmeiras, fontes locais Bungee e Yellowtail e botões de salvar com fita cassete. A identidade é própria do PeraGym.
+## Instalação
 
-## Doação opcional
+- Android: abra o aplicativo no Chrome e toque em **Instalar**.
+- iPhone: abra no Safari → **Compartilhar → Adicionar à Tela de Início**.
 
-Antes de instalar, a página oferece um QR Code e Pix Copia e Cola para uma **doação sugerida de R$ 1,99** à chave `bruno.pera@unifesp.br`.
+Abra uma vez com internet para preparar os treinos offline. Em **Ajustes**, salve ou importe um backup. Dados de outro endereço ou navegador não são transferidos automaticamente: exporte o backup no app anterior e importe no novo.
 
-O botão **Continuar sem doar e instalar** fica sempre disponível. O aplicativo é gratuito, sem cadastro, login, compra, comprovante ou confirmação de pagamento. A doação não condiciona o acesso ao aplicativo. `/app/` e `/download` são públicos.
+## Música e Pix
 
-## Instalar
+A aba Música carrega links públicos no player oficial do YouTube. Precisa de internet e permissão de incorporação do conteúdo. O acesso à conta abre no YouTube Music; o PeraGym não coleta senha ou importa biblioteca privada.
 
-- **Android:** Chrome → Instalar aplicativo.
-- **iPhone:** Safari → Compartilhar → Adicionar à Tela de Início.
+A doação Pix de R$ 1,99 é opcional. O aplicativo pode ser instalado e usado sem doar. O QR Code e o Copia e Cola funcionam no site estático, sem servidor de pagamento.
 
-A instalação precisa ser confirmada no próprio aparelho. Abra o app uma vez com internet para preparar o uso offline. Os registros ficam no aparelho; use o backup local antes de trocar de navegador, aparelho ou apagar os dados do site.
+## GitHub Pages
 
-## Música
-
-A aba **Música** aceita links de vídeos e playlists públicas do YouTube e YouTube Music no player oficial do YouTube. Os **oito links recentes** ficam no IndexedDB e no backup local.
-
-O player permanece visível durante a navegação pelas fichas e pausa quando o app perde visibilidade ou um formulário cobre a tela. A música requer internet e permissão de incorporação pelo autor; os treinos continuam disponíveis offline.
-
-O botão para acessar a conta abre o **site oficial do YouTube Music para login externo**. O PeraGym não integra OAuth, não coleta senha e não importa biblioteca privada nem recursos Premium. Mais detalhes e referências estão em [pwa/README.md](pwa/README.md).
-
-## Código
-
-A implementação atual está em [pwa/](pwa/). A página promocional é [pwa/web/index.html](pwa/web/index.html), e o app está em [pwa/web/app/](pwa/web/app/).
+A publicação usa a configuração existente **main / raiz**. A entrada da raiz abre o site gerado em [docs/](docs/). Não há servidor, API ou banco remoto no GitHub Pages.
 
 ```sh
 cd pwa
 npm ci
 npm test
-npm run build
-npm run validate
+npm run build:pages
+npm run build:pages -- --check
 ```
 
-Os **49 testes** cobrem acesso gratuito, Pix opcional de R$ 1,99, migração do cache offline, IndexedDB, gráficos, backup, links de música, histórico recente e integridade dos recursos visuais e fontes locais. O fluxo de compras foi desativado; as antigas tabelas foram preservadas sem alteração. O app gratuito funciona sem o banco remoto ou cookies de licença.
+Após alterar [pwa/web/](pwa/web/), gere novamente os arquivos e envie `docs/`, `index.html` e `.nojekyll` junto com as fontes. O CI confere se a publicação está atualizada; o fluxo nativo do Pages publica o commit.
 
-Consulte [pwa/README.md](pwa/README.md). O código Android anterior permanece no repositório e no histórico como versão anterior.
+Prévia local: execute `npm run dev` na raiz depois do build. O site usa `/peragym/docs/`, inclusive no manifesto e no service worker.
+
+A implementação atual está em [pwa/](pwa/). O código Android anterior permanece no repositório como legado.

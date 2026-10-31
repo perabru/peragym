@@ -1,0 +1,38 @@
+{
+  "id": "/peragym/docs/app/",
+  "name": "PeraGym",
+  "short_name": "PeraGym",
+  "description": "Fichas, cargas, peso corporal e histórico de treinos. Dados salvos no aparelho.",
+  "lang": "pt-BR",
+  "start_url": "/peragym/docs/app/",
+  "scope": "/peragym/docs/",
+  "display": "standalone",
+  "background_color": "#100b26",
+  "theme_color": "#ff63b9",
+  "orientation": "any",
+  "categories": [
+    "health",
+    "fitness",
+    "productivity"
+  ],
+  "icons": [
+    {
+      "src": "/peragym/docs/icons/icon-192.png?v=3.2.0",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/peragym/docs/icons/icon-512.png?v=3.2.0",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/peragym/docs/icons/maskable-512.png?v=3.2.0",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

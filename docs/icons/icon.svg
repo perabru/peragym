@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="PeraGym, cassette PG neon">
+  <defs><clipPath id="sun"><circle cx="256" cy="166" r="86"/></clipPath><linearGradient id="edge" x1="0" x2="1"><stop stop-color="#5ee7ff"/><stop offset="1" stop-color="#ff63b9"/></linearGradient></defs>
+  <rect width="512" height="512" rx="104" fill="#100b26"/>
+  <rect x="26" y="26" width="460" height="460" rx="84" fill="none" stroke="#34204d" stroke-width="3"/>
+  <g clip-path="url(#sun)"><path fill="#ff63b9" d="M165 80h182v20H165z"/><path fill="#ff86a1" d="M165 104h182v20H165z"/><path fill="#ffa67f" d="M165 128h182v20H165z"/><path fill="#ffd480" d="M165 152h182v20H165z"/></g>
+  <g fill="none" stroke="#5ee7ff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"><path d="M128 202q7-36-3-64M125 138q-23-24-43-10m43 10q-11-35-28-39m28 39q10-30 29-30m-29 30q23-13 39 3M384 202q-6-35 4-61m0 0q24-22 43-5m-43 5q11-30 28-30m-28 30q-10-33-26-35m26 35q-24-14-40-1"/></g>
+  <rect x="96" y="158" width="320" height="218" rx="30" fill="none" stroke="#ff63b9" stroke-opacity=".22" stroke-width="17"/>
+  <rect x="103" y="165" width="306" height="204" rx="26" fill="#fff0d2" stroke="url(#edge)" stroke-width="7"/>
+  <path d="M119 184q0-5 5-5h264q5 0 5 5v54H119z" fill="#ff63b9"/>
+  <path d="M119 196h274v14H119z" fill="#b388ed"/>
+  <path d="M119 212h274v13H119z" fill="#5ee7ff"/>
+  <text x="256" y="229" text-anchor="middle" fill="#100b26" font-family="DejaVu Sans,Arial,sans-serif" font-size="64" font-weight="900" letter-spacing="-4">PG</text>
+  <rect x="137" y="249" width="238" height="68" rx="32" fill="#100b26"/>
+  <g fill="#fff0d2" stroke="#fff0d2" stroke-width="3"><circle cx="177" cy="283" r="25"/><circle cx="335" cy="283" r="25"/></g>
+  <g fill="#100b26"><circle cx="177" cy="283" r="12"/><circle cx="335" cy="283" r="12"/></g>
+  <g stroke="#100b26" stroke-width="5"><path d="M177 258v50m-25-25h50m-43-18 36 36m0-36-36 36M335 258v50m-25-25h50m-43-18 36 36m0-36-36 36"/></g>
+  <path d="M195 283h122" stroke="#fff0d2" stroke-width="7"/>
+  <path d="m180 336-10 32h172l-10-32z" fill="#100b26"/>
+  <g fill="#ff63b9"><circle cx="198" cy="352" r="5"/><circle cx="314" cy="352" r="5"/></g>
+  <g fill="#100b26"><circle cx="126" cy="344" r="4"/><circle cx="386" cy="344" r="4"/></g>
+  <path d="M194 411h124" stroke="#ff63b9" stroke-width="7" stroke-linecap="round"/>
+  <path d="M217 428h78" stroke="#5ee7ff" stroke-width="5" stroke-linecap="round"/>
+</svg>

@@ -1,4 +1,4 @@
-import {makeEmbedUrl} from './music-links.js?v=3.1.0';
+import {makeEmbedUrl} from './music-links.js?v=3.2.0';
 
 let apiPromise;
 function youtubeApi() {

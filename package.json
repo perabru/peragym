@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "test:ui": "node tests/ui.test.cjs"
+    "test:ui": "node tests/ui.test.cjs",
+    "dev": "node pwa/scripts/dev-pages.mjs"
   },
   "devDependencies": {
     "playwright": "1.62.1"

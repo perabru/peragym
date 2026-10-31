@@ -1,6 +1,6 @@
 {
   "name": "peragym-pwa",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,7 +8,8 @@
     "build": "node scripts/embed-assets.mjs && bash scripts/build.sh",
     "validate": "node scripts/validate-artifact.mjs",
     "test": "node --test tests/*.test.mjs web/app/*.test.mjs",
-    "db:generate": "drizzle-kit generate"
+    "db:generate": "drizzle-kit generate",
+    "build:pages": "node scripts/build-pages.mjs"
   },
   "dependencies": {
     "qrcode-generator": "2.0.4"
